@@ -1,0 +1,103 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/plexus-io",
+    "crates/plexus-meta",
+    "crates/plexus-core",
+    "crates/plexus-storage",
+    "crates/plexus-cluster",
+    "crates/plexus-security",
+    "crates/plexus-api",
+    "crates/plexus-web",
+    "plexus-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/chandranshB/plexusDB"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bincode = "1"
+bytes = "1"
+
+# Hashing / Checksums
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = "1"
+crc32fast = "1"
+
+# Compression
+zstd = "0.13"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# gRPC
+tonic = { version = "0.12", features = ["tls"] }
+tonic-build = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+
+# Web
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+
+# Crypto / TLS
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+
+# SQLite
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Raft
+openraft = { version = "0.10", features = ["serde"] }
+
+# S3
+aws-sdk-s3 = "1"
+aws-config = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Metrics
+prometheus-client = "0.23"
+
+# Concurrency
+crossbeam-skiplist = "0.1"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+dashmap = "6"
+
+# Misc
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+rust-embed = "8"
+mime_guess = "2"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = 3
+panic = "abort"

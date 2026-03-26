@@ -1,0 +1,20 @@
+[package]
+name = "plexus-web"
+description = "Embedded Web UI dashboard for PlexusDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plexus-meta = { path = "../plexus-meta" }
+plexus-cluster = { path = "../plexus-cluster" }
+
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust-embed = { workspace = true }
+mime_guess = { workspace = true }
+tracing = { workspace = true }

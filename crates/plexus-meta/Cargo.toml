@@ -1,0 +1,18 @@
+[package]
+name = "plexus-meta"
+description = "Embedded SQLite metadata store for PlexusDB — tracks SSTables, levels, cluster state, and configuration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

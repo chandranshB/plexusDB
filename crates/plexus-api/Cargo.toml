@@ -1,0 +1,25 @@
+[package]
+name = "plexus-api"
+description = "gRPC service layer for PlexusDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+codegen = []
+
+[dependencies]
+plexus-core = { path = "../plexus-core" }
+plexus-meta = { path = "../plexus-meta" }
+plexus-cluster = { path = "../plexus-cluster" }
+
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }

@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package plexus.v1;
+
+// ============================================================================
+// PlexusDB — gRPC Service Definition
+// ============================================================================
+
+// Core key-value operations
+service PlexusDB {
+  // Single key operations
+  rpc Put(PutRequest) returns (PutResponse);
+  rpc Get(GetRequest) returns (GetResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // Batch operations for throughput
+  rpc BatchPut(BatchPutRequest) returns (BatchPutResponse);
+  rpc BatchGet(BatchGetRequest) returns (BatchGetResponse);
+  rpc BatchDelete(BatchDeleteRequest) returns (BatchDeleteResponse);
+
+  // Range scan with streaming
+  rpc Scan(ScanRequest) returns (stream ScanResponse);
+
+  // Cluster management
+  rpc ClusterStatus(ClusterStatusRequest) returns (ClusterStatusResponse);
+  rpc NodeInfo(NodeInfoRequest) returns (NodeInfoResponse);
+  rpc JoinCluster(JoinClusterRequest) returns (JoinClusterResponse);
+}
+
+// ---- Consistency ----
+enum ConsistencyLevel {
+  CONSISTENCY_LEVEL_UNSPECIFIED = 0;
+  STRONG = 1;       // Read from Raft leader, linearizable
+  EVENTUAL = 2;     // Read from any replica, faster
+  SESSION = 3;      // Read-your-writes within a session
+}
+
+// ---- Put ----
+message PutRequest {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 ttl_seconds = 3;   // 0 = no expiry
+  string namespace = 4;      // Logical grouping (default: "default")
+}
+
+message PutResponse {
+  bool success = 1;
+  uint64 timestamp = 2;      // Server-assigned write timestamp
+}
+
+// ---- Get ----
+message GetRequest {
+  bytes key = 1;
+  string namespace = 2;
+  ConsistencyLevel consistency = 3;
+}
+
+message GetResponse {
+  bool found = 1;
+  bytes value = 2;
+  uint64 timestamp = 3;
+}
+
+// ---- Delete ----
+message DeleteRequest {
+  bytes key = 1;
+  string namespace = 2;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  uint64 timestamp = 2;
+}
+
+// ---- Batch Put ----
+message BatchPutRequest {
+  repeated PutRequest entries = 1;
+}
+
+message BatchPutResponse {
+  uint32 succeeded = 1;
+  uint32 failed = 2;
+  repeated string errors = 3;
+}
+
+// ---- Batch Get ----
+message BatchGetRequest {
+  repeated GetRequest keys = 1;
+}
+
+message BatchGetResponse {
+  repeated GetResponse results = 1;
+}
+
+// ---- Batch Delete ----
+message BatchDeleteRequest {
+  repeated DeleteRequest keys = 1;
+}
+
+message BatchDeleteResponse {
+  uint32 succeeded = 1;
+  uint32 failed = 2;
+}
+
+// ---- Scan ----
+message ScanRequest {
+  bytes start_key = 1;       // Inclusive
+  bytes end_key = 2;         // Exclusive (empty = scan to end)
+  uint32 limit = 3;          // Max results (0 = unlimited)
+  string namespace = 4;
+  ConsistencyLevel consistency = 5;
+  bool reverse = 6;
+}
+
+message ScanResponse {
+  bytes key = 1;
+  bytes value = 2;
+  uint64 timestamp = 3;
+}
+
+// ---- Cluster Status ----
+message ClusterStatusRequest {}
+
+message ClusterStatusResponse {
+  string cluster_id = 1;
+  uint32 node_count = 2;
+  repeated NodeStatus nodes = 3;
+  string leader_id = 4;
+  uint64 current_term = 5;
+}
+
+message NodeStatus {
+  string node_id = 1;
+  string address = 2;
+  NodeState state = 3;
+  StorageInfo storage = 4;
+  uint64 uptime_seconds = 5;
+  double cpu_usage = 6;
+  uint64 memory_bytes = 7;
+}
+
+enum NodeState {
+  NODE_STATE_UNSPECIFIED = 0;
+  LEADER = 1;
+  FOLLOWER = 2;
+  CANDIDATE = 3;
+  LEARNER = 4;
+  OFFLINE = 5;
+}
+
+message StorageInfo {
+  uint64 ssd_total_bytes = 1;
+  uint64 ssd_used_bytes = 2;
+  uint64 hdd_total_bytes = 3;
+  uint64 hdd_used_bytes = 4;
+  uint64 s3_used_bytes = 5;
+  string storage_mode = 6;      // "ssd_only", "hdd_only", "hybrid"
+  uint32 sstable_count = 7;
+  uint32 level_count = 8;
+}
+
+// ---- Node Info ----
+message NodeInfoRequest {}
+
+message NodeInfoResponse {
+  string node_id = 1;
+  string version = 2;
+  string address = 3;
+  NodeState state = 4;
+  StorageInfo storage = 5;
+  map<string, string> config = 6;
+}
+
+// ---- Join Cluster ----
+message JoinClusterRequest {
+  string node_id = 1;
+  string address = 2;
+}
+
+message JoinClusterResponse {
+  bool success = 1;
+  string cluster_id = 2;
+  repeated string peer_addresses = 3;
+}

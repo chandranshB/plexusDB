@@ -1,0 +1,22 @@
+[package]
+name = "plexus-cluster"
+description = "Distributed consensus, gossip, and consistent hashing for PlexusDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plexus-meta = { path = "../plexus-meta" }
+
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+tokio = { workspace = true }
+xxhash-rust = { workspace = true }
+blake3 = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }

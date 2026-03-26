@@ -1,0 +1,30 @@
+[package]
+name = "plexus-core"
+description = "LSM-Tree storage engine for PlexusDB — WAL, MemTable, SSTable, Bloom filters, compaction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plexus-io = { path = "../plexus-io" }
+plexus-meta = { path = "../plexus-meta" }
+
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+bincode = { workspace = true }
+crossbeam-skiplist = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+xxhash-rust = { workspace = true }
+blake3 = { workspace = true }
+crc32fast = { workspace = true }
+zstd = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
+rand = { workspace = true }

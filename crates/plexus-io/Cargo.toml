@@ -1,0 +1,20 @@
+[package]
+name = "plexus-io"
+description = "Hardware-aware I/O abstraction layer for PlexusDB — io_uring + O_DIRECT on Linux, fallback on other platforms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }
+bytes = { workspace = true }
+crossbeam-channel = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+io-uring = "0.7"
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"

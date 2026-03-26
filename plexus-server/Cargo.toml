@@ -1,0 +1,31 @@
+[package]
+name = "plexus-server"
+description = "PlexusDB — single-binary distributed NoSQL database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "plexus"
+path = "src/main.rs"
+
+[dependencies]
+plexus-io = { path = "../crates/plexus-io" }
+plexus-meta = { path = "../crates/plexus-meta" }
+plexus-core = { path = "../crates/plexus-core" }
+plexus-storage = { path = "../crates/plexus-storage" }
+plexus-cluster = { path = "../crates/plexus-cluster" }
+plexus-security = { path = "../crates/plexus-security" }
+plexus-web = { path = "../crates/plexus-web" }
+
+anyhow = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }

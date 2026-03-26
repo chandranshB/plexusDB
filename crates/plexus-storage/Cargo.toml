@@ -1,0 +1,17 @@
+[package]
+name = "plexus-storage"
+description = "Hardware detection and tiered storage routing for PlexusDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+plexus-io = { path = "../plexus-io" }
+plexus-meta = { path = "../plexus-meta" }
+
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+zstd = { workspace = true }

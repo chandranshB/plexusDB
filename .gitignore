@@ -1,0 +1,39 @@
+# Build artifacts
+/target
+**/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Rust
+**/*.rs.bk
+Cargo.lock
+
+# PlexusDB runtime data
+plexus-data/
+plexus-certs/
+*.db
+*.db-shm
+*.db-wal
+
+# Generated protobuf code (rebuild with cargo build)
+crates/plexus-api/src/generated/*.rs
+!crates/plexus-api/src/generated/.gitkeep
+
+# Temp files
+*.tmp
+*.bak
+.plexus_probe_tmp
+
+# Environment
+.env
+.env.local
