@@ -26,6 +26,7 @@ const MAX_SCAN_LIMIT: usize = 100_000;
 
 /// Validate and normalise a namespace string.
 /// Returns `"default"` for empty namespaces, or an error if too long.
+#[allow(clippy::result_large_err)]
 fn validate_namespace(ns: &str) -> Result<&str, Status> {
     if ns.is_empty() {
         return Ok("default");
@@ -470,9 +471,12 @@ fn disk_usage_bytes(path: &std::path::Path) -> (u64, u64) {
         }
         // SAFETY: statvfs succeeded, so stat is fully initialized.
         let stat = unsafe { stat.assume_init() };
+        #[allow(clippy::unnecessary_cast)]
         let block = stat.f_frsize as u64;
-        let total = stat.f_blocks * block;
-        let avail = stat.f_bavail * block;
+        #[allow(clippy::unnecessary_cast)]
+        let total = stat.f_blocks as u64 * block;
+        #[allow(clippy::unnecessary_cast)]
+        let avail = stat.f_bavail as u64 * block;
         (total, avail)
     }
 

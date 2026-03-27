@@ -275,10 +275,7 @@ impl GossipEngine {
                 None
             }
 
-            GossipMessage::PingReq {
-                sender,
-                target,
-            } => {
+            GossipMessage::PingReq { sender, target } => {
                 // Forward a Ping to `target` on behalf of `sender`.
                 // We do this in a fire-and-forget Tokio task so the receiver
                 // loop is not blocked. The ACK (if any) is relayed back to
@@ -293,23 +290,34 @@ impl GossipEngine {
                     let incarnation = *self.local_incarnation.read();
                     tokio::spawn(async move {
                         use tokio::net::UdpSocket;
-                        let Ok(sock) = UdpSocket::bind("0.0.0.0:0").await else { return };
+                        let Ok(sock) = UdpSocket::bind("0.0.0.0:0").await else {
+                            return;
+                        };
                         let ping = GossipMessage::Ping {
                             sender: our_id.clone(),
                             incarnation,
                             updates: vec![],
                         };
-                        let Ok(enc) = bincode::serialize(&ping) else { return };
-                        if sock.send_to(&enc, target_addr).await.is_err() { return }
+                        let Ok(enc) = bincode::serialize(&ping) else {
+                            return;
+                        };
+                        if sock.send_to(&enc, target_addr).await.is_err() {
+                            return;
+                        }
                         // Wait briefly for ACK from target
                         let mut buf = vec![0u8; MAX_DATAGRAM];
                         let ack = tokio::time::timeout(
                             std::time::Duration::from_millis(500),
                             sock.recv_from(&mut buf),
-                        ).await.ok().and_then(|r| r.ok())
-                         .and_then(|(len, _)| bincode::deserialize::<GossipMessage>(&buf[..len]).ok())
-                         .map(|m| matches!(m, GossipMessage::Ack { .. }))
-                         .unwrap_or(false);
+                        )
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|(len, _)| {
+                            bincode::deserialize::<GossipMessage>(&buf[..len]).ok()
+                        })
+                        .map(|m| matches!(m, GossipMessage::Ack { .. }))
+                        .unwrap_or(false);
                         if ack {
                             // Relay ACK back to original sender
                             let relay_ack = GossipMessage::Ack {
@@ -532,11 +540,7 @@ impl GossipEngine {
                 };
 
                 // Send PING
-                if probe_sock
-                    .send_to(&encoded, target.address)
-                    .await
-                    .is_err()
-                {
+                if probe_sock.send_to(&encoded, target.address).await.is_err() {
                     probe_engine.suspect(&target.node_id);
                     continue;
                 }

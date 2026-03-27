@@ -101,7 +101,12 @@ impl Engine {
                     .map_err(|e| EngineError::Wal(e.to_string()))?;
             }
         }
-        tracing::info!(entries = total_recovered, max_ts, wal_files = wal_files.len(), "WAL recovery complete");
+        tracing::info!(
+            entries = total_recovered,
+            max_ts,
+            wal_files = wal_files.len(),
+            "WAL recovery complete"
+        );
         let flush_signal = Arc::new((StdMutex::new(false), Condvar::new()));
         let engine = Arc::new(Self {
             config,
@@ -478,20 +483,33 @@ impl Engine {
 
     fn flush_frozen(&self) -> Result<(), EngineError> {
         loop {
+            // Increment flushing_count BEFORE popping from the queue.
+            // This closes the race window where flush() could see an empty
+            // queue AND flushing_count==0 between the pop and the increment,
+            // causing it to return before the SSTable is actually written.
+            self.flushing_count.fetch_add(1, Ordering::AcqRel);
             let mt = match self.frozen.write().pop_front() {
                 Some(m) => m,
-                None => break,
+                None => {
+                    // Nothing to flush — undo the speculative increment and stop.
+                    self.flushing_count.fetch_sub(1, Ordering::AcqRel);
+                    break;
+                }
             };
             // Skip empty memtables — nothing to flush
             if mt.is_empty() {
+                self.flushing_count.fetch_sub(1, Ordering::AcqRel);
                 continue;
             }
-            self.flushing_count.fetch_add(1, Ordering::AcqRel);
             let result = self.flush_memtable_to_sst(&mt);
-            // Always decrement — even on error — to prevent flush() from
-            // waiting forever if flush_memtable_to_sst returns Err.
-            self.flushing_count.fetch_sub(1, Ordering::AcqRel);
-            let result = result?;
+            let result = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    // Decrement before returning so flush() is never stuck waiting.
+                    self.flushing_count.fetch_sub(1, Ordering::AcqRel);
+                    return Err(e);
+                }
+            };
             tracing::info!(entries = result.entry_count, size = result.file_size, path = %result.path.display(), "flushed MemTable to SSTable");
             let file_name = format!(
                 "L0/{}",
@@ -501,7 +519,8 @@ impl Engine {
                     .unwrap_or_default()
                     .to_string_lossy()
             );
-            self.manifest
+            let manifest_result = self
+                .manifest
                 .add_sstable(&plexus_meta::queries::SsTableInfo {
                     id: 0,
                     file_name,
@@ -517,7 +536,11 @@ impl Engine {
                     checksum: result.checksum,
                     storage_tier: "local".to_string(),
                     s3_key: None,
-                })?;
+                });
+            // Decrement AFTER manifest is updated so flush() only unblocks
+            // once the SSTable is fully registered and visible to readers.
+            self.flushing_count.fetch_sub(1, Ordering::AcqRel);
+            manifest_result?;
         }
         Ok(())
     }
@@ -581,7 +604,8 @@ impl Engine {
                         discarded = result.entries_discarded,
                         "L0->L1 compaction complete"
                     );
-                }                Err(e) => tracing::error!(error = %e, "L0->L1 compaction failed"),
+                }
+                Err(e) => tracing::error!(error = %e, "L0->L1 compaction failed"),
             }
         }
 

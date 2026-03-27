@@ -1,0 +1,18 @@
+# cargo-audit configuration for PlexusDB
+# See: https://github.com/rustsec/rustsec/tree/main/cargo-audit
+
+[advisories]
+ignore = [
+    # bincode 1.x is unmaintained (RUSTSEC-2025-0141).
+    # Migrating to bincode 2.x requires a full API rewrite of the gossip layer.
+    # Not a security vulnerability — tracked for a future release.
+    "RUSTSEC-2025-0141",
+    # rustls-pemfile 2.x is unmaintained (RUSTSEC-2025-0134).
+    # Transitive dep via tonic/rcgen; no published v3 exists on crates.io yet.
+    "RUSTSEC-2025-0134",
+]
+
+[output]
+# Fail the audit only on vulnerabilities and unsound code — not on unmaintained
+# or informational notices (those are handled via the ignore list above).
+deny = ["vulnerability", "unsound"]

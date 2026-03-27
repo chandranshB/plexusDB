@@ -1,7 +1,7 @@
 # ── Stage 1: Builder ──────────────────────────────────────────────────────────
 # Uses the official Rust image. We install protoc so the gRPC stubs can be
 # regenerated from source — no pre-generated files needed.
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.91-bookworm AS builder
 
 # Install build dependencies:
 #   protobuf-compiler  — for tonic-build gRPC codegen
@@ -27,6 +27,7 @@ COPY crates/plexus-api/Cargo.toml       crates/plexus-api/Cargo.toml
 COPY crates/plexus-web/Cargo.toml       crates/plexus-web/Cargo.toml
 COPY crates/plexus-client/Cargo.toml    crates/plexus-client/Cargo.toml
 COPY plexus-server/Cargo.toml           plexus-server/Cargo.toml
+COPY tests/Cargo.toml                   tests/Cargo.toml
 
 # Create stub lib/main files so `cargo fetch` resolves without real source
 RUN mkdir -p \
@@ -39,7 +40,8 @@ RUN mkdir -p \
     crates/plexus-api/src/generated \
     crates/plexus-web/src \
     crates/plexus-client/src \
-    plexus-server/src && \
+    plexus-server/src \
+    tests && \
     for d in crates/plexus-io crates/plexus-meta crates/plexus-core \
               crates/plexus-storage crates/plexus-cluster crates/plexus-security \
               crates/plexus-web crates/plexus-client; do \
@@ -47,7 +49,8 @@ RUN mkdir -p \
     done && \
     echo "fn main() {}" > plexus-server/src/main.rs && \
     touch crates/plexus-api/src/lib.rs && \
-    touch crates/plexus-api/src/generated/.gitkeep
+    touch crates/plexus-api/src/generated/.gitkeep && \
+    touch tests/engine_integration.rs
 
 # Fetch and compile all dependencies (cached layer)
 RUN cargo fetch

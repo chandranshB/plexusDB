@@ -199,7 +199,9 @@ impl Entry {
             // Tombstone: skip any value bytes (shouldn't be any, but be safe)
             if val_len > 0 {
                 if pos + val_len > data.len() {
-                    return Err(EngineError::Corruption("tombstone value extends beyond data".into()));
+                    return Err(EngineError::Corruption(
+                        "tombstone value extends beyond data".into(),
+                    ));
                 }
                 pos += val_len;
             }

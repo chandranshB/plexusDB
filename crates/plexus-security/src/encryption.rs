@@ -86,7 +86,7 @@ impl EncryptionManager {
         }
 
         // Write key file
-        std::fs::write(key_path, &key).map_err(SecurityError::Io)?;
+        std::fs::write(key_path, key).map_err(SecurityError::Io)?;
 
         // Restrict permissions to owner-read-only on Unix
         #[cfg(unix)]

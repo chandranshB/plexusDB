@@ -201,8 +201,12 @@ async fn main() -> anyhow::Result<()> {
             if encrypt {
                 let key_path = data_dir.join("master.key");
                 match plexus_security::encryption::EncryptionManager::load_or_generate(&key_path) {
-                    Ok(_) => tracing::info!("at-rest encryption: ENABLED (AES-256-GCM, key persisted)"),
-                    Err(e) => tracing::warn!(error = %e, "encryption key setup failed — running unencrypted"),
+                    Ok(_) => {
+                        tracing::info!("at-rest encryption: ENABLED (AES-256-GCM, key persisted)")
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "encryption key setup failed — running unencrypted")
+                    }
                 }
             }
 

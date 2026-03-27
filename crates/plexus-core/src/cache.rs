@@ -245,9 +245,18 @@ mod tests {
         // Cache holds exactly 2 entries of 10 bytes each
         let cache = BlockCache::new(20);
 
-        let k0 = CacheKey { file_name: "f.sst".into(), block_index: 0 };
-        let k1 = CacheKey { file_name: "f.sst".into(), block_index: 1 };
-        let k2 = CacheKey { file_name: "f.sst".into(), block_index: 2 };
+        let k0 = CacheKey {
+            file_name: "f.sst".into(),
+            block_index: 0,
+        };
+        let k1 = CacheKey {
+            file_name: "f.sst".into(),
+            block_index: 1,
+        };
+        let k2 = CacheKey {
+            file_name: "f.sst".into(),
+            block_index: 2,
+        };
 
         cache.insert(k0.clone(), vec![0u8; 10]);
         cache.insert(k1.clone(), vec![1u8; 10]);
