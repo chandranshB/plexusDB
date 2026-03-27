@@ -3,13 +3,16 @@
 //! The cache keeps hot data blocks in RAM to avoid redundant disk reads.
 //! This is especially critical when PlexusDB manages its own memory via
 //! `O_DIRECT` (bypassing the kernel page cache).
+//!
+//! Uses a HashMap + BTreeMap<(access_counter, key)> for O(log n) LRU eviction
+//! instead of the previous O(n) linear scan.
 
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Cache key: (SSTable file name, block index).
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CacheKey {
     pub file_name: String,
     pub block_index: usize,
@@ -24,7 +27,7 @@ struct CacheEntry {
     last_access: u64,
 }
 
-/// Thread-safe LRU block cache.
+/// Thread-safe LRU block cache with O(log n) eviction.
 pub struct BlockCache {
     inner: Mutex<CacheInner>,
     /// Maximum cache size in bytes.
@@ -38,6 +41,8 @@ pub struct BlockCache {
 
 struct CacheInner {
     entries: HashMap<CacheKey, CacheEntry>,
+    /// Ordered index for O(log n) LRU eviction: (last_access, key) → ()
+    lru_index: BTreeMap<(u64, CacheKey), ()>,
     current_size: usize,
 }
 
@@ -47,6 +52,7 @@ impl BlockCache {
         Self {
             inner: Mutex::new(CacheInner {
                 entries: HashMap::new(),
+                lru_index: BTreeMap::new(),
                 current_size: 0,
             }),
             max_size,
@@ -60,9 +66,15 @@ impl BlockCache {
     pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>> {
         let mut inner = self.inner.lock();
         if let Some(entry) = inner.entries.get_mut(key) {
-            entry.last_access = self.access_counter.fetch_add(1, Ordering::Relaxed);
+            let old_access = entry.last_access;
+            let new_access = self.access_counter.fetch_add(1, Ordering::Relaxed);
+            entry.last_access = new_access;
+            let data = entry.data.clone();
+            // Update LRU index: remove old position, insert new
+            inner.lru_index.remove(&(old_access, key.clone()));
+            inner.lru_index.insert((new_access, key.clone()), ());
             self.hits.fetch_add(1, Ordering::Relaxed);
-            Some(entry.data.clone())
+            Some(data)
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
             None
@@ -78,19 +90,16 @@ impl BlockCache {
 
         // Remove existing entry if present
         if let Some(old) = inner.entries.remove(&key) {
+            inner.lru_index.remove(&(old.last_access, key.clone()));
             inner.current_size -= old.size;
         }
 
-        // Evict LRU entries until we have room
-        while inner.current_size + size > self.max_size && !inner.entries.is_empty() {
-            // Find the LRU entry
-            let lru_key = inner
-                .entries
-                .iter()
-                .min_by_key(|(_, v)| v.last_access)
-                .map(|(k, _)| k.clone());
-
-            if let Some(lru_key) = lru_key {
+        // Evict LRU entries until we have room — O(log n) per eviction
+        while inner.current_size + size > self.max_size && !inner.lru_index.is_empty() {
+            // The smallest key in lru_index is the least recently used
+            let lru = inner.lru_index.keys().next().cloned();
+            if let Some((lru_access, lru_key)) = lru {
+                inner.lru_index.remove(&(lru_access, lru_key.clone()));
                 if let Some(evicted) = inner.entries.remove(&lru_key) {
                     inner.current_size -= evicted.size;
                 }
@@ -101,6 +110,7 @@ impl BlockCache {
 
         // Insert new entry (if it fits)
         if size <= self.max_size {
+            inner.lru_index.insert((access, key.clone()), ());
             inner.entries.insert(
                 key,
                 CacheEntry {
@@ -117,6 +127,7 @@ impl BlockCache {
     pub fn invalidate(&self, key: &CacheKey) {
         let mut inner = self.inner.lock();
         if let Some(entry) = inner.entries.remove(key) {
+            inner.lru_index.remove(&(entry.last_access, key.clone()));
             inner.current_size -= entry.size;
         }
     }
@@ -133,6 +144,7 @@ impl BlockCache {
 
         for key in keys {
             if let Some(entry) = inner.entries.remove(&key) {
+                inner.lru_index.remove(&(entry.last_access, key));
                 inner.current_size -= entry.size;
             }
         }
@@ -142,6 +154,7 @@ impl BlockCache {
     pub fn clear(&self) {
         let mut inner = self.inner.lock();
         inner.entries.clear();
+        inner.lru_index.clear();
         inner.current_size = 0;
     }
 
@@ -225,6 +238,27 @@ mod tests {
 
         // Cache should have evicted oldest entries
         assert!(cache.current_size() <= 100);
+    }
+
+    #[test]
+    fn test_lru_evicts_least_recently_used() {
+        // Cache holds exactly 2 entries of 10 bytes each
+        let cache = BlockCache::new(20);
+
+        let k0 = CacheKey { file_name: "f.sst".into(), block_index: 0 };
+        let k1 = CacheKey { file_name: "f.sst".into(), block_index: 1 };
+        let k2 = CacheKey { file_name: "f.sst".into(), block_index: 2 };
+
+        cache.insert(k0.clone(), vec![0u8; 10]);
+        cache.insert(k1.clone(), vec![1u8; 10]);
+        // Access k0 to make it more recently used than k1
+        cache.get(&k0);
+        // Insert k2 — should evict k1 (LRU), not k0
+        cache.insert(k2.clone(), vec![2u8; 10]);
+
+        assert!(cache.get(&k0).is_some(), "k0 should still be cached");
+        assert!(cache.get(&k1).is_none(), "k1 should have been evicted");
+        assert!(cache.get(&k2).is_some(), "k2 should be cached");
     }
 
     #[test]

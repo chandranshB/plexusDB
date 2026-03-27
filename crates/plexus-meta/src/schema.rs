@@ -178,9 +178,7 @@ CREATE TABLE users (
     last_login      TEXT
 );
 
--- Default admin user (password: 'plexus' — MUST be changed on first login)
-INSERT INTO users (username, password_hash, role) 
-VALUES ('admin', '$argon2_placeholder$', 'admin');
+-- No default users are created. Use the CLI to create the first admin account.
 
 -- ════════════════════════════════════════════════════════════════════
 -- Namespaces: logical data groupings

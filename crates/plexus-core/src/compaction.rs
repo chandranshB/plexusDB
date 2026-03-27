@@ -107,7 +107,7 @@ impl CompactionEngine {
             sources.push(Box::new(VecSource::new(entries)));
         }
 
-        // Merge all sources
+        // Merge all sources — MergeIterator deduplicates by keeping newest version per key
         let merger = MergeIterator::new(sources);
 
         // Write output SSTable(s)
@@ -124,30 +124,36 @@ impl CompactionEngine {
 
         let mut writer = SsTableWriter::new(&output_path, writer_config)?;
         let mut entries_written = 0u64;
+        let mut entries_discarded = 0u64;
+
+        // Tombstones can only be safely dropped at the last level (L6 by default).
+        // At any earlier level, a tombstone must be preserved to shadow older
+        // versions that may still exist in deeper levels.
+        let last_level = self.config.max_levels as u32 - 1;
+        let drop_tombstones = job.to_level >= last_level;
 
         for entry in merger {
-            // During compaction to higher levels, we can drop tombstones
-            // if we're sure there are no older versions in lower levels.
-            // For safety, we keep tombstones in L0→L1 compaction.
-            if entry.is_tombstone() && job.to_level >= 2 {
-                // TODO: Check if key exists in lower levels before dropping
-                // For now, keep tombstones to be safe
+            if drop_tombstones && entry.is_tombstone() {
+                entries_discarded += 1;
+                continue;
             }
-
             writer.add(&entry)?;
             entries_written += 1;
         }
 
+        // If nothing was written (all tombstones dropped), still finish the writer
+        // but skip registering an empty SSTable — caller checks entry_count.
         let result = writer.finish()?;
 
-        let entries_discarded = total_input_entries.saturating_sub(entries_written);
+        let total_discarded =
+            total_input_entries.saturating_sub(entries_written) + entries_discarded;
 
         tracing::info!(
             from = job.from_level,
             to = job.to_level,
             input_files = job.input_files.len(),
             entries_written,
-            entries_discarded,
+            entries_discarded = total_discarded,
             output_size = result.file_size,
             "compaction complete"
         );
@@ -156,7 +162,7 @@ impl CompactionEngine {
             output_files: vec![result],
             input_files: job.input_files.clone(),
             entries_written,
-            entries_discarded,
+            entries_discarded: total_discarded,
         })
     }
 

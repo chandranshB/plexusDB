@@ -16,11 +16,14 @@
 pub mod bloom;
 pub mod cache;
 pub mod compaction;
+pub mod engine;
 pub mod iterator;
 pub mod manifest;
 pub mod memtable;
 pub mod sstable;
 pub mod wal;
+
+pub use engine::Engine;
 
 use std::path::PathBuf;
 
@@ -192,19 +195,25 @@ impl Entry {
         // Always validate and advance past value bytes, even for tombstones.
         // Corrupt data may have tombstone=true with val_len>0; we must
         // still skip the value bytes to keep pos aligned with the stream.
-        let value = if val_len > 0 {
+        let value = if is_tombstone {
+            // Tombstone: skip any value bytes (shouldn't be any, but be safe)
+            if val_len > 0 {
+                if pos + val_len > data.len() {
+                    return Err(EngineError::Corruption("tombstone value extends beyond data".into()));
+                }
+                pos += val_len;
+            }
+            None
+        } else if val_len > 0 {
             if pos + val_len > data.len() {
                 return Err(EngineError::Corruption("value extends beyond data".into()));
             }
-            let v = if is_tombstone {
-                None // tombstone — discard value bytes
-            } else {
-                Some(data[pos..pos + val_len].to_vec())
-            };
+            let v = Some(data[pos..pos + val_len].to_vec());
             pos += val_len;
             v
         } else {
-            None
+            // val_len == 0 and not a tombstone → empty value
+            Some(vec![])
         };
 
         // Timestamp
@@ -334,13 +343,13 @@ mod tests {
 
     #[test]
     fn test_entry_encode_decode_empty_value() {
-        // The on-disk format doesn't distinguish Some(b"") from None —
-        // both encode as val_len=0 and decode back as None.
+        // Empty value (Some(b"")) should round-trip correctly as Some(b"").
         let entry = Entry::put(b"key".to_vec(), b"".to_vec(), 1);
         let encoded = entry.encode();
         let (decoded, consumed) = Entry::decode(&encoded).unwrap();
         assert_eq!(decoded.key, b"key");
-        assert_eq!(decoded.value, None); // empty value round-trips to None
+        assert_eq!(decoded.value, Some(vec![])); // empty value round-trips as Some(b"")
+        assert!(!decoded.is_tombstone());
         assert_eq!(consumed, encoded.len());
     }
 

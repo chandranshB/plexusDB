@@ -272,6 +272,23 @@ impl Wal {
         Ok(entries)
     }
 
+    /// List all WAL files in the directory, sorted by sequence number.
+    pub fn list_all(dir: &Path) -> Result<Vec<PathBuf>, EngineError> {
+        let mut files = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with("wal_") && name.ends_with(".log") {
+                    files.push(entry.path());
+                }
+            }
+        }
+        // Sort lexicographically — wal_000000.log < wal_000001.log
+        files.sort();
+        Ok(files)
+    }
+
     /// Delete a sealed WAL file after its entries have been flushed to SSTable.
     pub fn delete_sealed(path: &Path) -> Result<(), EngineError> {
         fs::remove_file(path).map_err(|e| EngineError::Wal(e.to_string()))?;

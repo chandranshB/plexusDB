@@ -12,6 +12,7 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -20,9 +21,16 @@ use crate::sstable::format::*;
 use crate::{EngineConfig, EngineError, Entry};
 
 /// Builds an SSTable file from sorted entries.
+///
+/// Writes to a `.tmp` file first, then atomically renames to the final path
+/// on `finish()`. This prevents partial/corrupt SSTables from being visible
+/// to readers if the process crashes mid-write.
 pub struct SsTableWriter {
     writer: BufWriter<File>,
+    /// Final destination path.
     path: PathBuf,
+    /// Temporary path written to until `finish()`.
+    tmp_path: PathBuf,
     config: SsTableWriterConfig,
     /// Current data block being built.
     current_block: Vec<u8>,
@@ -107,14 +115,23 @@ impl SsTableWriter {
                 .map_err(|e| EngineError::SsTable(format!("cannot create dir: {e}")))?;
         }
 
-        let file = File::create(path)
-            .map_err(|e| EngineError::SsTable(format!("cannot create SSTable: {e}")))?;
+        // Write to a temp file; rename atomically on finish() to avoid
+        // leaving a partial SSTable visible if the process crashes mid-write.
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let tmp_path = path.with_extension(format!("tmp{ts}"));
+
+        let file = File::create(&tmp_path)
+            .map_err(|e| EngineError::SsTable(format!("cannot create SSTable tmp: {e}")))?;
 
         let bloom = BloomFilter::new(config.expected_entries, config.bloom_fp_rate);
 
         Ok(Self {
             writer: BufWriter::with_capacity(256 * 1024, file), // 256KB buffer
             path: path.to_path_buf(),
+            tmp_path,
             config,
             current_block: Vec::with_capacity(DEFAULT_BLOCK_SIZE),
             index: Vec::new(),
@@ -264,6 +281,11 @@ impl SsTableWriter {
             .get_ref()
             .sync_data()
             .map_err(|e| EngineError::SsTable(e.to_string()))?;
+
+        // Atomically rename tmp → final path so readers never see a partial file.
+        // If this rename fails, the tmp file is left behind (harmless orphan).
+        fs::rename(&self.tmp_path, &self.path)
+            .map_err(|e| EngineError::SsTable(format!("atomic rename failed: {e}")))?;
 
         let checksum_hex = hex::encode(checksum_bytes);
 

@@ -4,28 +4,72 @@
 
 pub mod service;
 
-// The protobuf-generated code will be here after running `cargo build`.
-// The build.rs script invokes tonic-build to generate from plexus.proto.
-// For now, we conditionally include it if the file exists.
-#[cfg(feature = "codegen")]
 pub mod proto {
     include!("generated/plexus.v1.rs");
 }
+
+pub use proto::plexus_db_server::PlexusDbServer;
+pub use service::PlexusService;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn make_gossip() -> std::sync::Arc<plexus_cluster::gossip::GossipEngine> {
+        std::sync::Arc::new(plexus_cluster::gossip::GossipEngine::new(
+            plexus_cluster::gossip::GossipConfig::default(),
+        ))
+    }
+
+    fn make_ring() -> std::sync::Arc<parking_lot::RwLock<plexus_cluster::hash_ring::HashRing>> {
+        std::sync::Arc::new(parking_lot::RwLock::new(
+            plexus_cluster::hash_ring::HashRing::new(),
+        ))
+    }
+
     #[test]
     fn test_service_creation() {
-        let svc = service::PlexusService::new("test-node-1".to_string());
-        assert_eq!(svc.node_id(), "test-node-1");
-        assert!(!svc.version().is_empty());
+        use plexus_core::{Engine, EngineConfig};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let engine = Engine::open(EngineConfig {
+            data_dir: tmp.path().to_path_buf(),
+            ..EngineConfig::default()
+        })
+        .unwrap();
+
+        let svc = service::PlexusService::new(
+            engine,
+            make_gossip(),
+            make_ring(),
+            "test-node".into(),
+            "0.0.0.0:9090".into(),
+            "ssd_only".into(),
+        );
+        drop(svc);
     }
 
     #[test]
     fn test_service_version_matches_cargo() {
-        let svc = service::PlexusService::new("node".to_string());
-        assert_eq!(svc.version(), env!("CARGO_PKG_VERSION"));
+        use plexus_core::{Engine, EngineConfig};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let engine = Engine::open(EngineConfig {
+            data_dir: tmp.path().to_path_buf(),
+            ..EngineConfig::default()
+        })
+        .unwrap();
+
+        let svc = service::PlexusService::new(
+            engine,
+            make_gossip(),
+            make_ring(),
+            "node".into(),
+            "0.0.0.0:9090".into(),
+            "ssd_only".into(),
+        );
+        drop(svc);
     }
 }

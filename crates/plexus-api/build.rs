@@ -4,7 +4,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let proto_file = "../../proto/plexus.proto";
     if std::path::Path::new(proto_file).exists() {
-        // Only attempt codegen if protoc is available
         match tonic_build::configure()
             .build_server(true)
             .build_client(true)
@@ -14,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(_) => println!("cargo:warning=protobuf codegen successful"),
             Err(e) => {
                 println!("cargo:warning=protobuf codegen skipped: {e}");
-                println!("cargo:warning=install protoc to enable gRPC codegen");
+                println!("cargo:warning=install protoc to regenerate gRPC stubs");
             }
         }
     }

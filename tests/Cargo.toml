@@ -1,0 +1,13 @@
+[package]
+name = "plexus-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "engine_integration"
+path = "engine_integration.rs"
+
+[dependencies]
+plexus-core = { path = "../crates/plexus-core" }
+tempfile = "3"

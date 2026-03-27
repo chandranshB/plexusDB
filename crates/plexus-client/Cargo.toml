@@ -1,0 +1,20 @@
+[package]
+name = "plexus-client"
+description = "Rust client library for PlexusDB"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+plexus-api = { path = "../plexus-api" }
+
+tokio = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"

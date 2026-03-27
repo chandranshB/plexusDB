@@ -2,6 +2,13 @@
 //!
 //! Encrypts individual SSTable data blocks, enabling random-access
 //! reads without decrypting the entire file.
+//!
+//! ## Key Persistence
+//!
+//! The master key is persisted to `<data_dir>/master.key` with mode 0600
+//! (owner-read-only). On restart the same key is loaded so existing
+//! encrypted SSTables remain readable. If the file is absent a new key
+//! is generated and saved.
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -10,6 +17,7 @@ use aes_gcm::{
 use hkdf::Hkdf;
 use rand::RngCore;
 use sha2::Sha256;
+use std::path::Path;
 
 use crate::SecurityError;
 
@@ -48,6 +56,48 @@ impl EncryptionManager {
         let mut key = [0u8; KEY_SIZE];
         rand::thread_rng().fill_bytes(&mut key);
         key
+    }
+
+    /// Load the master key from `key_path`, or generate and persist a new one.
+    ///
+    /// The key file is created with restrictive permissions (0600 on Unix) so
+    /// only the process owner can read it. On Windows the file is created
+    /// normally — consider using DPAPI or a secrets manager in production.
+    pub fn load_or_generate(key_path: &Path) -> Result<Self, SecurityError> {
+        if key_path.exists() {
+            let bytes = std::fs::read(key_path).map_err(SecurityError::Io)?;
+            if bytes.len() != KEY_SIZE {
+                return Err(SecurityError::KeyDerivation(format!(
+                    "master key file has wrong length: {} (expected {KEY_SIZE})",
+                    bytes.len()
+                )));
+            }
+            let mut key = [0u8; KEY_SIZE];
+            key.copy_from_slice(&bytes);
+            tracing::info!(path = %key_path.display(), "loaded existing master key");
+            return Ok(Self::new(key));
+        }
+
+        // Generate a new key and persist it
+        let key = Self::generate_key();
+
+        if let Some(parent) = key_path.parent() {
+            std::fs::create_dir_all(parent).map_err(SecurityError::Io)?;
+        }
+
+        // Write key file
+        std::fs::write(key_path, &key).map_err(SecurityError::Io)?;
+
+        // Restrict permissions to owner-read-only on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(key_path, perms).map_err(SecurityError::Io)?;
+        }
+
+        tracing::info!(path = %key_path.display(), "generated and persisted new master key");
+        Ok(Self::new(key))
     }
 
     /// Whether encryption is enabled.

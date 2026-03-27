@@ -386,14 +386,12 @@ fn detect_drive_type_windows(root: &Path) -> StorageKind {
 
 #[cfg(target_os = "macos")]
 fn detect_macos() -> Vec<StorageDevice> {
-    // macOS: most Macs have SSDs. Use system_profiler heuristic.
     tracing::info!("macOS: assuming SSD storage (Apple Silicon / T2)");
 
     let mut total_bytes = 0u64;
     let mut available_bytes = 0u64;
 
-    // Try to get root filesystem size via statvfs
-    #[cfg(unix)]
+    // Get root filesystem size via statvfs (always available on macOS/unix)
     {
         use std::ffi::CString;
         let root = CString::new("/").unwrap();

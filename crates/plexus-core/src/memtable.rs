@@ -14,20 +14,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::Entry;
 
-/// A composite key for the skip list that sorts by (key, reverse timestamp).
+/// A composite key for the skip list that sorts by (namespace, key, reverse timestamp).
 ///
-/// Sorting by reverse timestamp ensures that the latest version of a key
-/// appears first during iteration, enabling efficient point lookups.
+/// Including namespace in the key ensures complete isolation between namespaces —
+/// `(ns_a, "key")` and `(ns_b, "key")` are entirely separate entries.
+/// Sorting by reverse timestamp within a (namespace, key) pair ensures the
+/// latest version appears first during iteration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct MemKey {
+    namespace: String,
     key: Vec<u8>,
     /// Stored as `u64::MAX - timestamp` so that newer entries sort first.
     reverse_ts: u64,
 }
 
 impl MemKey {
-    fn new(key: Vec<u8>, timestamp: u64) -> Self {
+    fn new(namespace: String, key: Vec<u8>, timestamp: u64) -> Self {
         Self {
+            namespace,
             key,
             // wrapping_sub prevents panic in debug on u64::MAX timestamps
             reverse_ts: u64::MAX.wrapping_sub(timestamp),
@@ -39,11 +43,9 @@ impl MemKey {
 #[derive(Debug, Clone)]
 struct MemValue {
     value: Option<Vec<u8>>,
-    namespace: String,
 }
 
 /// In-memory sorted table backed by a lock-free skip list.
-#[allow(dead_code)]
 pub struct MemTable {
     /// The underlying skip list.
     map: SkipMap<MemKey, MemValue>,
@@ -53,8 +55,6 @@ pub struct MemTable {
     count: AtomicU64,
     /// Whether this MemTable is frozen (read-only).
     frozen: AtomicBool,
-    /// Creation timestamp.
-    created_at: u64,
 }
 
 impl MemTable {
@@ -65,10 +65,6 @@ impl MemTable {
             size: AtomicU64::new(0),
             count: AtomicU64::new(0),
             frozen: AtomicBool::new(false),
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_micros() as u64,
         }
     }
 
@@ -82,11 +78,8 @@ impl MemTable {
 
         let entry_size = entry.encoded_size() as u64;
 
-        let mem_key = MemKey::new(entry.key, entry.timestamp);
-        let mem_val = MemValue {
-            value: entry.value,
-            namespace: entry.namespace,
-        };
+        let mem_key = MemKey::new(entry.namespace, entry.key, entry.timestamp);
+        let mem_val = MemValue { value: entry.value };
 
         self.map.insert(mem_key, mem_val);
         self.size.fetch_add(entry_size, Ordering::Relaxed);
@@ -95,32 +88,27 @@ impl MemTable {
         Ok(())
     }
 
-    /// Look up the latest value for a key.
+    /// Look up the latest value for a key within a namespace.
     ///
-    /// Returns `None` if the key doesn't exist. Returns `Some(None)` if
-    /// the key was deleted (tombstone).
-    pub fn get(&self, key: &[u8]) -> Option<Entry> {
-        // Create a search key with the highest possible timestamp
-        let search = MemKey::new(key.to_vec(), u64::MAX);
+    /// Returns `None` if the key doesn't exist in that namespace.
+    /// Returns `Some(Entry { value: None, .. })` if the key was deleted (tombstone).
+    pub fn get(&self, key: &[u8], namespace: &str) -> Option<Entry> {
+        // Search key: (namespace, key, reverse_ts=0) is the smallest key for this
+        // (namespace, key) pair. The first entry at or after it is the latest version
+        // (highest timestamp = smallest reverse_ts).
+        let search = MemKey::new(namespace.to_string(), key.to_vec(), u64::MAX);
 
-        // Find the first entry >= search key (which will be our key with
-        // the highest timestamp due to reverse-ts ordering)
-        let iter = self.map.range(search..);
-
-        for entry in iter {
+        if let Some(entry) = self.map.range(search..).next() {
             let mem_key = entry.key();
-            if mem_key.key == key {
+            // Confirm we're still on the right (namespace, key) pair
+            if mem_key.namespace == namespace && mem_key.key == key {
                 let mem_val = entry.value();
                 return Some(Entry {
                     key: mem_key.key.clone(),
                     value: mem_val.value.clone(),
                     timestamp: u64::MAX.wrapping_sub(mem_key.reverse_ts),
-                    namespace: mem_val.namespace.clone(),
+                    namespace: mem_key.namespace.clone(),
                 });
-            }
-            // Past our key range
-            if mem_key.key.as_slice() > key {
-                break;
             }
         }
 
@@ -159,7 +147,7 @@ impl MemTable {
 
     /// Iterate all entries in sorted order for flushing to SSTable.
     ///
-    /// Entries are yielded in (key, timestamp_desc) order.
+    /// Entries are yielded in (namespace, key, timestamp_desc) order.
     pub fn iter(&self) -> impl Iterator<Item = Entry> + '_ {
         self.map.iter().map(|entry| {
             let mem_key = entry.key();
@@ -168,7 +156,7 @@ impl MemTable {
                 key: mem_key.key.clone(),
                 value: mem_val.value.clone(),
                 timestamp: u64::MAX.wrapping_sub(mem_key.reverse_ts),
-                namespace: mem_val.namespace.clone(),
+                namespace: mem_key.namespace.clone(),
             }
         })
     }
@@ -204,13 +192,13 @@ mod tests {
         mt.put(Entry::put(b"key2".to_vec(), b"value2".to_vec(), 2))
             .unwrap();
 
-        let result = mt.get(b"key1").unwrap();
+        let result = mt.get(b"key1", "default").unwrap();
         assert_eq!(result.value, Some(b"value1".to_vec()));
 
-        let result = mt.get(b"key2").unwrap();
+        let result = mt.get(b"key2", "default").unwrap();
         assert_eq!(result.value, Some(b"value2".to_vec()));
 
-        assert!(mt.get(b"key3").is_none());
+        assert!(mt.get(b"key3", "default").is_none());
     }
 
     #[test]
@@ -222,7 +210,7 @@ mod tests {
         mt.put(Entry::put(b"key1".to_vec(), b"new".to_vec(), 2))
             .unwrap();
 
-        let result = mt.get(b"key1").unwrap();
+        let result = mt.get(b"key1", "default").unwrap();
         assert_eq!(result.value, Some(b"new".to_vec()));
         assert_eq!(result.timestamp, 2);
     }
@@ -235,9 +223,32 @@ mod tests {
             .unwrap();
         mt.put(Entry::delete(b"key1".to_vec(), 2)).unwrap();
 
-        let result = mt.get(b"key1").unwrap();
+        let result = mt.get(b"key1", "default").unwrap();
         assert!(result.is_tombstone());
         assert_eq!(result.timestamp, 2);
+    }
+
+    #[test]
+    fn test_namespace_isolation_in_memtable() {
+        let mt = MemTable::new();
+
+        let mut e_a = Entry::put(b"key".to_vec(), b"ns_a".to_vec(), 1);
+        e_a.namespace = "ns_a".to_string();
+        let mut e_b = Entry::put(b"key".to_vec(), b"ns_b".to_vec(), 2);
+        e_b.namespace = "ns_b".to_string();
+
+        mt.put(e_a).unwrap();
+        mt.put(e_b).unwrap();
+
+        assert_eq!(
+            mt.get(b"key", "ns_a").unwrap().value,
+            Some(b"ns_a".to_vec())
+        );
+        assert_eq!(
+            mt.get(b"key", "ns_b").unwrap().value,
+            Some(b"ns_b".to_vec())
+        );
+        assert!(mt.get(b"key", "default").is_none());
     }
 
     #[test]
@@ -260,6 +271,7 @@ mod tests {
         mt.put(Entry::put(b"b".to_vec(), b"2".to_vec(), 1)).unwrap();
 
         let entries = mt.drain_sorted();
+        // All in default namespace — sorted by (namespace, key)
         assert_eq!(entries[0].key, b"a");
         assert_eq!(entries[1].key, b"b");
         assert_eq!(entries[2].key, b"c");

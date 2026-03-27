@@ -1,0 +1,149 @@
+version: "3.9"
+
+# ── PlexusDB Docker Compose ───────────────────────────────────────────────────
+#
+# Profiles:
+#   (default)  — single node, simplest setup
+#   cluster    — 3-node cluster with gossip
+#
+# Usage:
+#   Single node:   docker compose up
+#   3-node cluster: docker compose --profile cluster up
+#   Build locally:  docker compose build
+#
+# Environment variables (optional, set in .env):
+#   PLEXUS_S3_BUCKET    — S3 bucket for cold-tier archival
+#   PLEXUS_S3_ENDPOINT  — S3-compatible endpoint (MinIO, R2, etc.)
+#   AWS_ACCESS_KEY_ID   — AWS credentials (or use IAM role)
+#   AWS_SECRET_ACCESS_KEY
+
+x-plexus-common: &plexus-common
+  image: plexusdb:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment:
+    RUST_LOG: ${RUST_LOG:-info}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    PLEXUS_S3_BUCKET: ${PLEXUS_S3_BUCKET:-}
+    PLEXUS_S3_ENDPOINT: ${PLEXUS_S3_ENDPOINT:-}
+
+services:
+  # ── Single-node (default profile) ──────────────────────────────────────────
+  plexus:
+    <<: *plexus-common
+    container_name: plexusdb
+    ports:
+      - "9090:9090"   # gRPC
+      - "8080:8080"   # Web UI
+      - "7947:7947"   # Gossip
+    volumes:
+      - plexus-data:/data
+    command:
+      - start
+      - --data-dir=/data
+      - --grpc-addr=0.0.0.0:9090
+      - --web-addr=0.0.0.0:8080
+      - --gossip-addr=0.0.0.0:7947
+      - --node-id=node-single
+      - --memtable-size-mb=64
+      - --cache-size-mb=256
+      - --log-level=${RUST_LOG:-info}
+    healthcheck:
+      test: ["CMD", "plexus", "status", "--addr", "127.0.0.1:9090"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    profiles: ["", "single"]
+
+  # ── 3-node cluster ──────────────────────────────────────────────────────────
+  plexus-1:
+    <<: *plexus-common
+    container_name: plexusdb-1
+    ports:
+      - "9091:9090"
+      - "8081:8080"
+    volumes:
+      - plexus-data-1:/data
+    networks:
+      - plexus-cluster
+    command:
+      - start
+      - --data-dir=/data
+      - --grpc-addr=0.0.0.0:9090
+      - --web-addr=0.0.0.0:8080
+      - --gossip-addr=0.0.0.0:7947
+      - --node-id=node-1
+      - --memtable-size-mb=64
+      - --cache-size-mb=256
+    healthcheck:
+      test: ["CMD", "plexus", "status", "--addr", "127.0.0.1:9090"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    profiles: ["cluster"]
+
+  plexus-2:
+    <<: *plexus-common
+    container_name: plexusdb-2
+    ports:
+      - "9092:9090"
+      - "8082:8080"
+    volumes:
+      - plexus-data-2:/data
+    networks:
+      - plexus-cluster
+    command:
+      - start
+      - --data-dir=/data
+      - --grpc-addr=0.0.0.0:9090
+      - --web-addr=0.0.0.0:8080
+      - --gossip-addr=0.0.0.0:7947
+      - --node-id=node-2
+      - --join=plexus-1:7947
+      - --memtable-size-mb=64
+      - --cache-size-mb=256
+    depends_on:
+      plexus-1:
+        condition: service_healthy
+    profiles: ["cluster"]
+
+  plexus-3:
+    <<: *plexus-common
+    container_name: plexusdb-3
+    ports:
+      - "9093:9090"
+      - "8083:8080"
+    volumes:
+      - plexus-data-3:/data
+    networks:
+      - plexus-cluster
+    command:
+      - start
+      - --data-dir=/data
+      - --grpc-addr=0.0.0.0:9090
+      - --web-addr=0.0.0.0:8080
+      - --gossip-addr=0.0.0.0:7947
+      - --node-id=node-3
+      - --join=plexus-1:7947
+      - --memtable-size-mb=64
+      - --cache-size-mb=256
+    depends_on:
+      plexus-1:
+        condition: service_healthy
+    profiles: ["cluster"]
+
+volumes:
+  plexus-data:
+  plexus-data-1:
+  plexus-data-2:
+  plexus-data-3:
+
+networks:
+  plexus-cluster:
+    driver: bridge

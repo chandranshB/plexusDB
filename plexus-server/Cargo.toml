@@ -17,9 +17,11 @@ plexus-storage = { path = "../crates/plexus-storage" }
 plexus-cluster = { path = "../crates/plexus-cluster" }
 plexus-security = { path = "../crates/plexus-security" }
 plexus-web = { path = "../crates/plexus-web" }
+plexus-api = { path = "../crates/plexus-api" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -29,3 +31,4 @@ uuid = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+parking_lot = { workspace = true }

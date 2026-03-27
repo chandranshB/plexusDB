@@ -643,70 +643,131 @@
 
     <script>
     (function () {
-        // Write bar sparkline
+        // Write bar sparkline — tracks real write deltas
         const barContainer = document.getElementById('write-bars');
+        const barHistory = new Array(24).fill(0);
         for (let i = 0; i < 24; i++) {
             const bar = document.createElement('div');
             bar.className = 'bar bar-cyan';
-            bar.style.height = Math.max(3, Math.random() * 48) + 'px';
+            bar.style.height = '3px';
             barContainer.appendChild(bar);
         }
 
-        // Simulate cache ring
         function setRing(pct) {
             const circ = 175.93;
-            const offset = circ - (circ * pct / 100);
+            const offset = circ - (circ * Math.min(100, Math.max(0, pct)) / 100);
             document.getElementById('ring-used').style.strokeDashoffset = offset;
-            document.getElementById('ring-pct').textContent = pct + '%';
+            document.getElementById('ring-pct').textContent = Math.round(pct) + '%';
         }
         setRing(0);
 
-        // Poll status
+        function fmtBytes(b) {
+            if (b >= 1e9) return (b / 1e9).toFixed(1) + ' GB';
+            if (b >= 1e6) return (b / 1e6).toFixed(1) + ' MB';
+            if (b >= 1e3) return (b / 1e3).toFixed(1) + ' KB';
+            return b + ' B';
+        }
+
+        let prevWrites = 0;
+        let prevPollTime = Date.now();
+
         async function poll() {
             try {
-                const res = await fetch('/api/status');
-                const d = await res.json();
+                const [statusRes, metricsRes] = await Promise.all([
+                    fetch('/api/status'),
+                    fetch('/api/metrics'),
+                ]);
+                const d = await statusRes.json();
+                const m = metricsRes.ok ? await metricsRes.json() : null;
 
                 // Uptime
                 const s = d.uptime_seconds || 0;
                 const h = Math.floor(s / 3600);
-                const m = Math.floor((s % 3600) / 60);
+                const mn = Math.floor((s % 3600) / 60);
                 const sec = s % 60;
-                document.getElementById('uptime').textContent =
-                    h > 0 ? h + 'h ' + m + 'm' : m + 'm ' + sec + 's';
+                const uptimeStr = h > 0 ? h + 'h ' + mn + 'm' : mn + 'm ' + sec + 's';
+                document.getElementById('uptime').textContent = uptimeStr;
 
                 // Node ID
                 const short = (d.node_id || '').substring(0, 8);
                 document.getElementById('node-id-text').textContent = short + '...';
                 document.getElementById('footer-node').textContent = short + '...';
                 document.getElementById('tbl-node-id').textContent = (d.node_id || '').substring(0, 16) + '...';
-                document.getElementById('tbl-uptime').textContent =
-                    h > 0 ? h + 'h ' + m + 'm' : m + 'm ' + sec + 's';
-
-                // Version
+                document.getElementById('tbl-uptime').textContent = uptimeStr;
                 if (d.version) document.getElementById('ver').textContent = 'v' + d.version;
 
-                // Simulated metrics (will be real once engine is wired)
-                const fakeCacheRate = Math.min(98, 42 + Math.floor(s / 3));
-                document.getElementById('cache-pct').textContent = fakeCacheRate + '% hit';
-                document.getElementById('cache-stat').textContent = fakeCacheRate + '%';
-                document.getElementById('cache-bar').style.width = fakeCacheRate + '%';
+                if (m && !m.error) {
+                    // Real write rate (ops/sec since last poll)
+                    const now = Date.now();
+                    const elapsed = (now - prevPollTime) / 1000;
+                    const writeDelta = Math.max(0, (m.writes_total || 0) - prevWrites);
+                    const writeRate = elapsed > 0 ? Math.round(writeDelta / elapsed) : 0;
+                    prevWrites = m.writes_total || 0;
+                    prevPollTime = now;
+                    document.getElementById('write-rate').textContent = writeRate.toLocaleString();
 
-                const fakeWriteRate = Math.floor(120 + Math.random() * 80);
-                document.getElementById('write-rate').textContent = fakeWriteRate.toLocaleString();
+                    // Sparkline — shift left, add new bar
+                    barHistory.shift();
+                    barHistory.push(writeRate);
+                    const maxBar = Math.max(1, ...barHistory);
+                    const bars = barContainer.children;
+                    for (let i = 0; i < bars.length; i++) {
+                        bars[i].style.height = Math.max(3, (barHistory[i] / maxBar) * 48) + 'px';
+                    }
 
-                document.getElementById('storage-mode').textContent = 'SSD';
+                    // Cache hit rate
+                    const hitRate = m.cache ? m.cache.hit_rate : 0;
+                    const hitPct = Math.round(hitRate * 100);
+                    document.getElementById('cache-pct').textContent = hitPct + '% hit';
+                    document.getElementById('cache-stat').textContent = hitPct + '%';
+                    document.getElementById('cache-bar').style.width = hitPct + '%';
 
-                // Disk ring
-                setRing(Math.min(95, 4 + Math.floor(s / 10)));
-                document.getElementById('disk-used').textContent =
-                    (0.2 + s * 0.001).toFixed(1) + ' GB used';
-                document.getElementById('disk-free').textContent = '256 GB total';
+                    // Storage mode from status
+                    document.getElementById('storage-mode').textContent =
+                        (d.storage_mode || 'SSD').toUpperCase();
 
-                // Animate write bars
-                const bars = barContainer.children;
-                for (let i = 0; i < bars.length; i++) {
-                    bars[i].style.height = Math.max(3, Math.random() * 48) + 'px';
+                    // Disk usage from real SSTable sizes
+                    const diskUsed = m.sstables ? m.sstables.total_disk_bytes : 0;
+                    const walSize = m.wal_size_bytes || 0;
+                    const totalUsed = diskUsed + walSize;
+                    // Show used vs memtable+wal+sstable
+                    document.getElementById('disk-used').textContent = fmtBytes(totalUsed) + ' used';
+                    document.getElementById('disk-free').textContent =
+                        (m.sstables ? m.sstables.total + ' SSTables' : '0 SSTables');
+                    // Ring: show cache fill %
+                    const cacheUsed = m.cache ? m.cache.used_bytes : 0;
+                    const cacheMax = m.cache ? m.cache.max_bytes : 1;
+                    const cacheFill = cacheMax > 0 ? (cacheUsed / cacheMax) * 100 : 0;
+                    setRing(cacheFill);
+                    document.getElementById('ring-pct').textContent = fmtBytes(cacheUsed);
+
+                    // SSTable levels table
+                    const levels = m.sstables ? m.sstables.levels : [];
+                    const tbody = document.getElementById('levels-body');
+                    tbody.innerHTML = '';
+                    const tierLabels = ['Hot','Hot','Warm','Warm','Warm','Cold','Cold'];
+                    const tierClasses = ['pill-green','pill-green','pill-amber','pill-amber','pill-amber','pill-violet','pill-violet'];
+                    const barColors = ['var(--cyan)','var(--cyan)','var(--violet)','var(--violet)','var(--violet)','var(--amber)','var(--amber)'];
+                    for (let lvl = 0; lvl < 7; lvl++) {
+                        const entry = levels.find(l => l.level === lvl);
+                        const count = entry ? entry.sstables : 0;
+                        if (lvl > 2 && count === 0) continue; // hide empty high levels
+                        const maxFiles = lvl === 0 ? 4 : 10;
+                        const fillPct = Math.min(100, (count / maxFiles) * 100);
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td class="mono">L${lvl}</td>
+                            <td>${count}</td>
+                            <td>—</td>
+                            <td><div class="progress" style="width:80px"><div class="progress-fill" style="width:${fillPct}%;background:${barColors[lvl]}"></div></div></td>
+                            <td><span class="pill ${tierClasses[lvl]}">${tierLabels[lvl]}</span></td>`;
+                        tbody.appendChild(tr);
+                    }
+                } else {
+                    // No engine yet — show dashes
+                    document.getElementById('write-rate').textContent = '0';
+                    document.getElementById('cache-stat').textContent = '—';
+                    document.getElementById('storage-mode').textContent = '—';
                 }
             } catch (e) {
                 // Server not ready yet
@@ -714,7 +775,7 @@
         }
 
         poll();
-        setInterval(poll, 3000);
+        setInterval(poll, 2000);
     })();
     </script>
 </body>

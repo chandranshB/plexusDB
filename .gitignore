@@ -16,24 +16,27 @@ desktop.ini
 
 # Rust
 **/*.rs.bk
-Cargo.lock
+# NOTE: Cargo.lock IS committed for this binary project.
+# This ensures reproducible builds for end users.
 
-# PlexusDB runtime data
+# PlexusDB runtime data — never commit live data or certificates
 plexus-data/
 plexus-certs/
+plexus-bench/
 *.db
 *.db-shm
 *.db-wal
 
-# Generated protobuf code (rebuild with cargo build)
-crates/plexus-api/src/generated/*.rs
-!crates/plexus-api/src/generated/.gitkeep
+# Generated protobuf code (pre-generated stubs are committed instead)
+# Uncomment the line below only if you have protoc installed and want to regenerate:
+# crates/plexus-api/src/generated/*.rs
+# !crates/plexus-api/src/generated/.gitkeep
 
-# Temp files
+# Temp / probe files
 *.tmp
 *.bak
 .plexus_probe_tmp
 
-# Environment
+# Environment secrets — never commit these
 .env
 .env.local

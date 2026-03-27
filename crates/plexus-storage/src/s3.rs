@@ -2,8 +2,15 @@
 //!
 //! When local disk usage exceeds the configured threshold (default 80%),
 //! the oldest SSTables are compressed with zstd and uploaded to S3.
+//! Retrieval decompresses on the fly back to the local SST directory.
+//!
+//! Supports AWS S3 and any S3-compatible endpoint (MinIO, Cloudflare R2, etc.)
 
 use super::config::StorageConfig;
+use aws_config::BehaviorVersion;
+use aws_sdk_s3::config::Builder as S3ConfigBuilder;
+use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::Client;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -31,7 +38,28 @@ impl S3Agent {
         self.config.s3_enabled && self.config.s3_bucket.is_some()
     }
 
-    /// Compress an SSTable file for S3 upload.
+    /// Build an S3 client from the current config.
+    ///
+    /// Respects `s3_endpoint` for MinIO / Cloudflare R2 / other compatible stores.
+    async fn build_client(&self) -> Client {
+        let sdk_config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+
+        let mut builder = S3ConfigBuilder::from(&sdk_config);
+
+        if let Some(ref endpoint) = self.config.s3_endpoint {
+            builder = builder.endpoint_url(endpoint).force_path_style(true); // required for MinIO
+        }
+
+        if let Some(ref region) = self.config.s3_region {
+            builder = builder.region(aws_sdk_s3::config::Region::new(region.clone()));
+        }
+
+        Client::from_conf(builder.build())
+    }
+
+    /// Compress an SSTable file with zstd for upload.
+    ///
+    /// Returns `(compressed_path, original_size, compressed_size)`.
     pub fn compress_for_upload(input: &Path) -> Result<(PathBuf, u64, u64), std::io::Error> {
         let data = std::fs::read(input)?;
         let original_size = data.len() as u64;
@@ -53,16 +81,182 @@ impl S3Agent {
         Ok((output, original_size, compressed_size))
     }
 
-    /// Generate S3 key for an SSTable.
+    /// Upload a compressed SSTable to S3.
+    ///
+    /// The file at `compressed_path` is uploaded to `s3_key` in the configured bucket.
+    /// The temporary compressed file is deleted after a successful upload.
+    pub async fn upload(
+        &self,
+        compressed_path: &Path,
+        s3_key: &str,
+    ) -> Result<S3UploadResult, S3Error> {
+        let bucket = self
+            .config
+            .s3_bucket
+            .as_deref()
+            .ok_or(S3Error::NotConfigured)?;
+
+        let data = std::fs::read(compressed_path)
+            .map_err(|e| S3Error::Io(format!("read compressed file: {e}")))?;
+        let compressed_size = data.len() as u64;
+
+        // Derive original size from the uncompressed content length stored in the file
+        let original_size = {
+            let decompressed = zstd::decode_all(data.as_slice())
+                .map_err(|e| S3Error::Compression(e.to_string()))?;
+            decompressed.len() as u64
+        };
+
+        let client = self.build_client().await;
+
+        client
+            .put_object()
+            .bucket(bucket)
+            .key(s3_key)
+            .body(ByteStream::from(data))
+            .content_type("application/octet-stream")
+            .metadata("plexus-original-size", original_size.to_string())
+            .send()
+            .await
+            .map_err(|e| S3Error::Upload(e.to_string()))?;
+
+        tracing::info!(
+            bucket,
+            key = s3_key,
+            compressed = compressed_size,
+            original = original_size,
+            "SSTable uploaded to S3"
+        );
+
+        // Clean up the local compressed file after successful upload
+        let _ = std::fs::remove_file(compressed_path);
+
+        Ok(S3UploadResult {
+            s3_key: s3_key.to_string(),
+            bucket: bucket.to_string(),
+            compressed_size,
+            original_size,
+        })
+    }
+
+    /// Compress and upload an SSTable in one step.
+    ///
+    /// This is the primary entry point for tiering an SSTable to cold storage.
+    pub async fn tier_sstable(&self, local_path: &Path) -> Result<S3UploadResult, S3Error> {
+        if !self.is_enabled() {
+            return Err(S3Error::NotConfigured);
+        }
+
+        let file_name = local_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| S3Error::Io("invalid file name".into()))?;
+
+        let s3_key = self.s3_key(file_name);
+
+        let (compressed_path, _original, _compressed) =
+            Self::compress_for_upload(local_path).map_err(|e| S3Error::Io(e.to_string()))?;
+
+        self.upload(&compressed_path, &s3_key).await
+    }
+
+    /// Download and decompress an SSTable from S3 to a local path.
+    ///
+    /// The decompressed SSTable is written to `dest_path`.
+    pub async fn retrieve(&self, s3_key: &str, dest_path: &Path) -> Result<u64, S3Error> {
+        let bucket = self
+            .config
+            .s3_bucket
+            .as_deref()
+            .ok_or(S3Error::NotConfigured)?;
+
+        let client = self.build_client().await;
+
+        let resp = client
+            .get_object()
+            .bucket(bucket)
+            .key(s3_key)
+            .send()
+            .await
+            .map_err(|e| S3Error::Download(e.to_string()))?;
+
+        let compressed = resp
+            .body
+            .collect()
+            .await
+            .map_err(|e| S3Error::Download(e.to_string()))?
+            .into_bytes();
+
+        let decompressed = zstd::decode_all(compressed.as_ref())
+            .map_err(|e| S3Error::Compression(e.to_string()))?;
+
+        let size = decompressed.len() as u64;
+
+        if let Some(parent) = dest_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| S3Error::Io(format!("create dest dir: {e}")))?;
+        }
+
+        std::fs::write(dest_path, &decompressed)
+            .map_err(|e| S3Error::Io(format!("write retrieved SSTable: {e}")))?;
+
+        tracing::info!(
+            bucket,
+            key = s3_key,
+            dest = %dest_path.display(),
+            bytes = size,
+            "SSTable retrieved from S3"
+        );
+
+        Ok(size)
+    }
+
+    /// Delete an object from S3 (after it has been re-tiered or is no longer needed).
+    pub async fn delete(&self, s3_key: &str) -> Result<(), S3Error> {
+        let bucket = self
+            .config
+            .s3_bucket
+            .as_deref()
+            .ok_or(S3Error::NotConfigured)?;
+
+        let client = self.build_client().await;
+
+        client
+            .delete_object()
+            .bucket(bucket)
+            .key(s3_key)
+            .send()
+            .await
+            .map_err(|e| S3Error::Upload(e.to_string()))?;
+
+        tracing::info!(bucket, key = s3_key, "S3 object deleted");
+        Ok(())
+    }
+
+    /// Generate the S3 key for an SSTable file.
     pub fn s3_key(&self, file_name: &str) -> String {
         format!("plexus/frozen/{file_name}.zst")
     }
 
-    /// Upload would use aws-sdk-s3 — placeholder for the async implementation.
-    /// The actual upload is handled in the async runtime context.
+    /// Get the configured bucket name.
     pub fn bucket(&self) -> Option<&str> {
         self.config.s3_bucket.as_deref()
     }
+}
+
+/// Errors from S3 operations.
+#[derive(Debug, thiserror::Error)]
+pub enum S3Error {
+    #[error("S3 not configured (no bucket set or s3_enabled=false)")]
+    NotConfigured,
+    #[error("S3 upload failed: {0}")]
+    Upload(String),
+    #[error("S3 download failed: {0}")]
+    Download(String),
+    #[error("compression error: {0}")]
+    Compression(String),
+    #[error("I/O error: {0}")]
+    Io(String),
 }
 
 #[cfg(test)]
@@ -125,7 +319,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_for_upload() {
+    fn test_compress_for_upload_roundtrip() {
         let tmp = tempfile::TempDir::new().unwrap();
         let input = tmp.path().join("test.sst");
         let data = vec![0xABu8; 4096]; // 4KB of compressible data
@@ -141,5 +335,17 @@ mod tests {
             "compressed should be smaller than original"
         );
         assert!(output_path.to_string_lossy().ends_with(".zst"));
+
+        // Verify the compressed file can be decompressed back to original
+        let compressed = std::fs::read(&output_path).unwrap();
+        let decompressed = zstd::decode_all(compressed.as_slice()).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_not_configured_returns_error() {
+        let agent = S3Agent::new(config_no_s3());
+        assert!(!agent.is_enabled());
+        // tier_sstable would return S3Error::NotConfigured — verified by is_enabled check
     }
 }

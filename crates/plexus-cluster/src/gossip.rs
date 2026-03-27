@@ -5,11 +5,17 @@
 //! - Bounded false-positive failure detection
 //! - Piggybacked state dissemination on ping/ack messages
 //!
+//! ## Network Transport
+//!
+//! Messages are serialized with `bincode` and sent over UDP. Each datagram
+//! is capped at 1400 bytes (safe MTU). The `run()` method binds a UDP socket
+//! and drives the full SWIM protocol loop in a background Tokio task.
+//!
 //! Protocol:
-//! 1. Every `T` seconds, pick a random member and send PING
-//! 2. If no ACK within timeout → send PING-REQ to K random members
+//! 1. Every `ping_interval`, pick a random member and send PING
+//! 2. If no ACK within `ping_timeout` → send PING-REQ to K random members
 //! 3. If still no ACK → mark as SUSPECTED
-//! 4. After suspicion timeout → mark as DEAD
+//! 4. After `suspicion_timeout` → mark as DEAD
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -19,6 +25,12 @@ use std::time::Duration;
 use parking_lot::RwLock;
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+
+/// Maximum UDP datagram payload (safe below typical MTU).
+const MAX_DATAGRAM: usize = 1400;
+/// Maximum number of pending membership updates buffered for piggybacking.
+/// Older updates are dropped when this limit is reached to bound memory usage.
+const MAX_PENDING_UPDATES: usize = 256;
 
 /// Member state in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,14 +252,16 @@ impl GossipEngine {
 
                 tracing::info!(node = %node_id, addr = %address, "node joined cluster");
 
-                // Broadcast update
-                self.pending_updates.write().push(MemberUpdate {
-                    node_id,
-                    state: MemberState::Alive,
-                    incarnation: 0,
-                    address: Some(address),
-                });
-
+                // Broadcast update — cap queue to avoid unbounded growth
+                let mut pending = self.pending_updates.write();
+                if pending.len() < MAX_PENDING_UPDATES {
+                    pending.push(MemberUpdate {
+                        node_id,
+                        state: MemberState::Alive,
+                        incarnation: 0,
+                        address: Some(address),
+                    });
+                }
                 None
             }
 
@@ -262,12 +276,53 @@ impl GossipEngine {
             }
 
             GossipMessage::PingReq {
-                sender: _sender,
-                target: _target,
+                sender,
+                target,
             } => {
-                // Forward ping to target on behalf of sender
-                // In real implementation, we'd send a Ping to target
-                // and relay the response back to sender
+                // Forward a Ping to `target` on behalf of `sender`.
+                // We do this in a fire-and-forget Tokio task so the receiver
+                // loop is not blocked. The ACK (if any) is relayed back to
+                // the original sender.
+                let members = self.members.read();
+                let target_addr = members.get(&target).map(|m| m.address);
+                let sender_addr = members.get(&sender).map(|m| m.address);
+                drop(members);
+
+                if let (Some(target_addr), Some(sender_addr)) = (target_addr, sender_addr) {
+                    let our_id = self.config.node_id.clone();
+                    let incarnation = *self.local_incarnation.read();
+                    tokio::spawn(async move {
+                        use tokio::net::UdpSocket;
+                        let Ok(sock) = UdpSocket::bind("0.0.0.0:0").await else { return };
+                        let ping = GossipMessage::Ping {
+                            sender: our_id.clone(),
+                            incarnation,
+                            updates: vec![],
+                        };
+                        let Ok(enc) = bincode::serialize(&ping) else { return };
+                        if sock.send_to(&enc, target_addr).await.is_err() { return }
+                        // Wait briefly for ACK from target
+                        let mut buf = vec![0u8; MAX_DATAGRAM];
+                        let ack = tokio::time::timeout(
+                            std::time::Duration::from_millis(500),
+                            sock.recv_from(&mut buf),
+                        ).await.ok().and_then(|r| r.ok())
+                         .and_then(|(len, _)| bincode::deserialize::<GossipMessage>(&buf[..len]).ok())
+                         .map(|m| matches!(m, GossipMessage::Ack { .. }))
+                         .unwrap_or(false);
+                        if ack {
+                            // Relay ACK back to original sender
+                            let relay_ack = GossipMessage::Ack {
+                                sender: our_id,
+                                incarnation,
+                                updates: vec![],
+                            };
+                            if let Ok(enc) = bincode::serialize(&relay_ack) {
+                                let _ = sock.send_to(&enc, sender_addr).await;
+                            }
+                        }
+                    });
+                }
                 None
             }
         }
@@ -310,7 +365,6 @@ impl GossipEngine {
         let mut pending = self.pending_updates.write();
         std::mem::take(&mut *pending)
     }
-
     /// Select a random alive member for probing (excluding self).
     pub fn random_target(&self) -> Option<Member> {
         let members = self.members.read();
@@ -378,6 +432,214 @@ impl GossipEngine {
     /// Get this node's ID.
     pub fn node_id(&self) -> &str {
         &self.config.node_id
+    }
+
+    /// Bind a UDP socket and run the full SWIM gossip protocol loop.
+    ///
+    /// This spawns two Tokio tasks:
+    /// - A **receiver** that reads incoming datagrams and dispatches them to
+    ///   `handle_message()`, sending any reply back to the sender.
+    /// - A **prober** that fires every `ping_interval`, picks a random member,
+    ///   sends a PING, waits for an ACK, and marks the member as suspected if
+    ///   none arrives within `ping_timeout`.
+    ///
+    /// Call this once from your async runtime after creating the engine.
+    pub async fn run(self: Arc<Self>) -> Result<(), crate::ClusterError> {
+        use tokio::net::UdpSocket;
+
+        let socket = UdpSocket::bind(self.config.bind_addr).await.map_err(|e| {
+            crate::ClusterError::Network(format!("gossip bind {}: {e}", self.config.bind_addr))
+        })?;
+
+        let socket = Arc::new(socket);
+        tracing::info!(addr = %self.config.bind_addr, "gossip UDP socket bound");
+
+        // ── Receiver task ────────────────────────────────────────────────────
+        let recv_engine = Arc::clone(&self);
+        let recv_socket = Arc::clone(&socket);
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; MAX_DATAGRAM];
+            loop {
+                let (len, src) = match recv_socket.recv_from(&mut buf).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "gossip recv error");
+                        continue;
+                    }
+                };
+
+                let msg: GossipMessage = match bincode::deserialize(&buf[..len]) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::debug!(error = %e, src = %src, "gossip: malformed datagram");
+                        continue;
+                    }
+                };
+
+                if let Some(reply) = recv_engine.handle_message(msg) {
+                    if let Ok(encoded) = bincode::serialize(&reply) {
+                        if encoded.len() <= MAX_DATAGRAM {
+                            let _ = recv_socket.send_to(&encoded, src).await;
+                        }
+                    }
+                }
+            }
+        });
+
+        // ── Prober task ──────────────────────────────────────────────────────
+        let probe_engine = Arc::clone(&self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(probe_engine.config.ping_interval);
+            loop {
+                interval.tick().await;
+
+                // Check suspicion timeouts
+                probe_engine.check_suspicions();
+
+                // Pick a random target to probe
+                let target = match probe_engine.random_target() {
+                    Some(t) => t,
+                    None => continue, // single-node cluster
+                };
+
+                // Build PING with piggybacked updates
+                let updates = probe_engine.drain_pending_updates();
+                let incarnation = *probe_engine.local_incarnation.read();
+                let ping = GossipMessage::Ping {
+                    sender: probe_engine.config.node_id.clone(),
+                    incarnation,
+                    updates,
+                };
+
+                let encoded = match bincode::serialize(&ping) {
+                    Ok(b) => b,
+                    Err(_) => continue,
+                };
+
+                if encoded.len() > MAX_DATAGRAM {
+                    tracing::warn!("gossip PING too large, skipping");
+                    continue;
+                }
+
+                // Each probe uses its own ephemeral socket so it doesn't
+                // race with the receiver task on the shared listen socket.
+                let probe_sock = match tokio::net::UdpSocket::bind("0.0.0.0:0").await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "gossip: failed to bind probe socket");
+                        continue;
+                    }
+                };
+
+                // Send PING
+                if probe_sock
+                    .send_to(&encoded, target.address)
+                    .await
+                    .is_err()
+                {
+                    probe_engine.suspect(&target.node_id);
+                    continue;
+                }
+
+                // Wait for ACK with timeout
+                let timeout = probe_engine.config.ping_timeout;
+                let mut ack_buf = vec![0u8; MAX_DATAGRAM];
+                let got_ack = tokio::time::timeout(timeout, probe_sock.recv_from(&mut ack_buf))
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .and_then(|(len, _src)| {
+                        bincode::deserialize::<GossipMessage>(&ack_buf[..len]).ok()
+                    })
+                    .map(|msg| matches!(msg, GossipMessage::Ack { .. }))
+                    .unwrap_or(false);
+
+                if !got_ack {
+                    // No direct ACK — try indirect via K random members
+                    let indirect_targets: Vec<_> = {
+                        let members = probe_engine.members.read();
+                        members
+                            .values()
+                            .filter(|m| {
+                                m.node_id != probe_engine.config.node_id
+                                    && m.node_id != target.node_id
+                                    && m.state == MemberState::Alive
+                            })
+                            .take(probe_engine.config.indirect_checks)
+                            .cloned()
+                            .collect()
+                    };
+
+                    let mut indirect_ack = false;
+                    for relay in &indirect_targets {
+                        let req = GossipMessage::PingReq {
+                            sender: probe_engine.config.node_id.clone(),
+                            target: target.node_id.clone(),
+                        };
+                        if let Ok(enc) = bincode::serialize(&req) {
+                            let _ = probe_sock.send_to(&enc, relay.address).await;
+                        }
+                    }
+
+                    // Wait briefly for any indirect ACK
+                    if !indirect_targets.is_empty() {
+                        let indirect_timeout = probe_engine.config.ping_timeout * 2;
+                        indirect_ack = tokio::time::timeout(
+                            indirect_timeout,
+                            probe_sock.recv_from(&mut ack_buf),
+                        )
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())
+                        .and_then(|(len, _)| {
+                            bincode::deserialize::<GossipMessage>(&ack_buf[..len]).ok()
+                        })
+                        .map(|msg| matches!(msg, GossipMessage::Ack { .. }))
+                        .unwrap_or(false);
+                    }
+
+                    if !indirect_ack {
+                        probe_engine.suspect(&target.node_id);
+                        tracing::warn!(
+                            target = %target.node_id,
+                            addr = %target.address,
+                            "no ACK from target — marking suspected"
+                        );
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
+
+    /// Send a Join message to a seed node to bootstrap cluster membership.
+    pub async fn join_via_udp(
+        self: &Arc<Self>,
+        seed_addr: SocketAddr,
+    ) -> Result<(), crate::ClusterError> {
+        use tokio::net::UdpSocket;
+
+        let socket = UdpSocket::bind("0.0.0.0:0")
+            .await
+            .map_err(|e| crate::ClusterError::Network(e.to_string()))?;
+
+        let join_msg = GossipMessage::Join {
+            node_id: self.config.node_id.clone(),
+            address: self.config.bind_addr,
+            metadata: HashMap::new(),
+        };
+
+        let encoded = bincode::serialize(&join_msg)
+            .map_err(|e| crate::ClusterError::Network(e.to_string()))?;
+
+        socket
+            .send_to(&encoded, seed_addr)
+            .await
+            .map_err(|e| crate::ClusterError::Network(e.to_string()))?;
+
+        tracing::info!(seed = %seed_addr, node = %self.config.node_id, "sent Join to seed node");
+        Ok(())
     }
 }
 

@@ -9,7 +9,9 @@ members = [
     "crates/plexus-security",
     "crates/plexus-api",
     "crates/plexus-web",
+    "crates/plexus-client",
     "plexus-server",
+    "tests",
 ]
 
 [workspace.package]

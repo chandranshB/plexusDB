@@ -49,19 +49,22 @@ mod inner {
     impl UringBackend {
         /// Create a new io_uring backend with the given configuration.
         pub fn new(config: UringConfig) -> Result<Self, IoError> {
-            // Verify io_uring is available by attempting to create a probe
             tracing::info!(
                 sq_entries = config.sq_entries,
                 direct_io = config.direct_io,
                 "initializing io_uring backend"
             );
-
             Ok(Self { config })
         }
 
         /// Create with default configuration.
         pub fn with_defaults() -> Result<Self, IoError> {
             Self::new(UringConfig::default())
+        }
+
+        /// Whether O_DIRECT is enabled.
+        pub fn direct_io(&self) -> bool {
+            self.config.direct_io
         }
 
         /// Build open flags for the given mode.

@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+plexus-core = { path = "../plexus-core" }
 plexus-meta = { path = "../plexus-meta" }
 plexus-cluster = { path = "../plexus-cluster" }
 
@@ -18,3 +19,6 @@ serde_json = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
