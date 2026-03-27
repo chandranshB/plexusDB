@@ -52,7 +52,10 @@ pub fn parse_connection_string(conn_str: &str) -> Result<ConnectionInfo, &'stati
 
     let (username, password) = if let Some(auth) = auth {
         if let Some(colon) = auth.find(':') {
-            (Some(auth[..colon].to_string()), Some(auth[colon + 1..].to_string()))
+            (
+                Some(auth[..colon].to_string()),
+                Some(auth[colon + 1..].to_string()),
+            )
         } else {
             (Some(auth.to_string()), None)
         }
@@ -131,7 +134,10 @@ mod tests {
     fn test_different_salt_different_hash() {
         let hash1 = hash_password("pass", "salt_a");
         let hash2 = hash_password("pass", "salt_b");
-        assert_ne!(hash1, hash2, "different salts should produce different hashes");
+        assert_ne!(
+            hash1, hash2,
+            "different salts should produce different hashes"
+        );
     }
 
     #[test]

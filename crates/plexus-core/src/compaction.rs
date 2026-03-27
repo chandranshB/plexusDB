@@ -16,9 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::iterator::{MergeIterator, VecSource, EntrySource};
+use crate::iterator::{EntrySource, MergeIterator, VecSource};
 use crate::sstable::reader::SsTableReader;
-use crate::sstable::writer::{SsTableWriter, SsTableWriterConfig, SsTableBuildResult};
+use crate::sstable::writer::{SsTableBuildResult, SsTableWriter, SsTableWriterConfig};
 use crate::{EngineConfig, EngineError};
 
 /// Compaction job — describes what SSTables to merge.
@@ -189,8 +189,8 @@ impl CompactionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Entry;
     use crate::sstable::writer::SsTableWriterConfig;
+    use crate::Entry;
     use tempfile::TempDir;
 
     fn write_test_sstable(dir: &Path, name: &str, entries: Vec<Entry>) -> PathBuf {

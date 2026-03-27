@@ -11,12 +11,12 @@
 //!
 //! SQLite is used strictly for metadata — user data never touches SQLite.
 
-pub mod schema;
 pub mod queries;
+pub mod schema;
 
-use std::path::Path;
 use parking_lot::Mutex;
 use rusqlite::Connection;
+use std::path::Path;
 
 /// Errors from the metadata store.
 #[derive(Debug, thiserror::Error)]
@@ -57,7 +57,7 @@ impl MetaStore {
              PRAGMA cache_size = -8000;
              PRAGMA foreign_keys = ON;
              PRAGMA busy_timeout = 5000;
-             PRAGMA temp_store = MEMORY;"
+             PRAGMA temp_store = MEMORY;",
         )?;
 
         let store = Self {

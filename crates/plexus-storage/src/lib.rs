@@ -3,11 +3,11 @@
 //! Hardware detection and intelligent tiered storage routing.
 //! The "Brain" of PlexusDB that decides WHERE data lives.
 
-pub mod detect;
-pub mod tier;
 pub mod config;
+pub mod detect;
 pub mod s3;
+pub mod tier;
 
-pub use detect::{StorageDevice, StorageKind, detect_storage};
-pub use tier::{TierRouter, StorageTier};
 pub use config::StorageConfig;
+pub use detect::{detect_storage, StorageDevice, StorageKind};
+pub use tier::{StorageTier, TierRouter};

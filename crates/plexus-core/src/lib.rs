@@ -13,14 +13,14 @@
 //! All writes are sequential appends. All reads check MemTable first,
 //! then consult Bloom filters to avoid unnecessary disk I/O.
 
-pub mod wal;
-pub mod memtable;
-pub mod sstable;
 pub mod bloom;
 pub mod cache;
-pub mod iterator;
 pub mod compaction;
+pub mod iterator;
 pub mod manifest;
+pub mod memtable;
+pub mod sstable;
+pub mod wal;
 
 use std::path::PathBuf;
 
@@ -185,7 +185,8 @@ impl Entry {
         if pos + 4 > data.len() {
             return Err(EngineError::Corruption("missing value length".into()));
         }
-        let val_len = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let val_len =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
         // Always validate and advance past value bytes, even for tombstones.
@@ -211,8 +212,14 @@ impl Entry {
             return Err(EngineError::Corruption("missing timestamp".into()));
         }
         let timestamp = u64::from_le_bytes([
-            data[pos], data[pos + 1], data[pos + 2], data[pos + 3],
-            data[pos + 4], data[pos + 5], data[pos + 6], data[pos + 7],
+            data[pos],
+            data[pos + 1],
+            data[pos + 2],
+            data[pos + 3],
+            data[pos + 4],
+            data[pos + 5],
+            data[pos + 6],
+            data[pos + 7],
         ]);
         pos += 8;
 
@@ -223,7 +230,9 @@ impl Entry {
         let ns_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
         if pos + ns_len > data.len() {
-            return Err(EngineError::Corruption("namespace extends beyond data".into()));
+            return Err(EngineError::Corruption(
+                "namespace extends beyond data".into(),
+            ));
         }
         let namespace = String::from_utf8_lossy(&data[pos..pos + ns_len]).to_string();
         pos += ns_len;
@@ -269,12 +278,12 @@ impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             data_dir: PathBuf::from("./plexus-data"),
-            memtable_size: 32 * 1024 * 1024,       // 32 MB
-            wal_max_size: 64 * 1024 * 1024,          // 64 MB
-            block_cache_size: 256 * 1024 * 1024,      // 256 MB
+            memtable_size: 32 * 1024 * 1024,     // 32 MB
+            wal_max_size: 64 * 1024 * 1024,      // 64 MB
+            block_cache_size: 256 * 1024 * 1024, // 256 MB
             compaction_threads: 2,
             block_size: 4096,
-            bloom_fp_rate: 0.01,                     // 1% false positive
+            bloom_fp_rate: 0.01, // 1% false positive
             level_ratio: 10,
             max_levels: 7,
             compression: true,

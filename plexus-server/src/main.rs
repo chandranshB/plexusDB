@@ -34,7 +34,7 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, EnvFilter};
 
-use plexus_cluster::gossip::{GossipEngine, GossipConfig};
+use plexus_cluster::gossip::{GossipConfig, GossipEngine};
 use plexus_cluster::hash_ring::HashRing;
 use plexus_core::EngineConfig;
 use plexus_meta::MetaStore;
@@ -160,17 +160,14 @@ async fn main() -> anyhow::Result<()> {
             compaction_threads,
         } => {
             // ── Initialize Logging ──
-            let filter = EnvFilter::try_new(&log_level)
-                .unwrap_or_else(|_| EnvFilter::new("info"));
+            let filter = EnvFilter::try_new(&log_level).unwrap_or_else(|_| EnvFilter::new("info"));
             fmt()
                 .with_env_filter(filter)
                 .with_target(true)
                 .with_thread_ids(true)
                 .init();
 
-            let node_id = node_id.unwrap_or_else(|| {
-                uuid::Uuid::new_v4().to_string()
-            });
+            let node_id = node_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
             let start_time = Instant::now();
 
@@ -217,7 +214,8 @@ async fn main() -> anyhow::Result<()> {
 
             // ── Phase 4: Initialize Cluster ──
             tracing::info!("=== Phase 4: Initializing Cluster Mesh ===");
-            let gossip_bind: SocketAddr = gossip_addr.parse()
+            let gossip_bind: SocketAddr = gossip_addr
+                .parse()
                 .map_err(|e| anyhow::anyhow!("invalid gossip address '{}': {}", gossip_addr, e))?;
 
             let gossip_config = GossipConfig {
@@ -234,7 +232,9 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(join = %join_addr, "joining existing cluster");
                 gossip_engine.add_seed(
                     format!("seed-{}", join_addr),
-                    join_addr.parse().map_err(|e| anyhow::anyhow!("invalid join address '{}': {}", join_addr, e))?,
+                    join_addr.parse().map_err(|e| {
+                        anyhow::anyhow!("invalid join address '{}': {}", join_addr, e)
+                    })?,
                 );
             }
 
@@ -273,7 +273,8 @@ async fn main() -> anyhow::Result<()> {
             });
 
             let web_router = routes::router(web_state);
-            let web_listen: SocketAddr = web_addr.parse()
+            let web_listen: SocketAddr = web_addr
+                .parse()
                 .map_err(|e| anyhow::anyhow!("invalid web address '{}': {}", web_addr, e))?;
 
             let _web_handle = tokio::spawn(async move {
@@ -350,7 +351,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn print_banner(node_id: &str) {
-    println!(r#"
+    println!(
+        r#"
     ██████╗ ██╗     ███████╗██╗  ██╗██╗   ██╗███████╗
     ██╔══██╗██║     ██╔════╝╚██╗██╔╝██║   ██║██╔════╝
     ██████╔╝██║     █████╗   ╚███╔╝ ██║   ██║███████╗
@@ -360,7 +362,10 @@ fn print_banner(node_id: &str) {
                                             DB v{}
     Hardware-Aware · Distributed · Sequential-First
     Node: {}
-    "#, env!("CARGO_PKG_VERSION"), &node_id[..std::cmp::min(12, node_id.len())]);
+    "#,
+        env!("CARGO_PKG_VERSION"),
+        &node_id[..std::cmp::min(12, node_id.len())]
+    );
 }
 
 #[cfg(test)]

@@ -19,12 +19,12 @@ pub mod uring;
 
 pub mod fallback;
 
-pub use aligned::{AlignedBuf, AlignedBufPool, round_up_to_block};
+pub use aligned::{round_up_to_block, AlignedBuf, AlignedBufPool};
 pub use traits::{IoBackend, IoCommand, IoCompletion};
 
+pub use fallback::FallbackBackend;
 #[cfg(target_os = "linux")]
 pub use uring::UringBackend;
-pub use fallback::FallbackBackend;
 
 /// Block size used for Direct I/O alignment.
 pub const BLOCK_SIZE: usize = 4096;

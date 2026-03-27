@@ -298,12 +298,7 @@ fn get_disk_space_windows(root: &str) -> Option<(u64, u64)> {
     let mut free_total: u64 = 0;
 
     let ret = unsafe {
-        GetDiskFreeSpaceExW(
-            wide.as_ptr(),
-            &mut free_caller,
-            &mut total,
-            &mut free_total,
-        )
+        GetDiskFreeSpaceExW(wide.as_ptr(), &mut free_caller, &mut total, &mut free_total)
     };
 
     if ret != 0 {

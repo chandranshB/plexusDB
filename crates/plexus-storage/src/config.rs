@@ -1,7 +1,7 @@
 //! Storage configuration.
 
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Configuration for the storage subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]

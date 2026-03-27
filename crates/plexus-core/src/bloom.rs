@@ -28,8 +28,8 @@ impl BloomFilter {
         let num_bits = num_bits.max(64); // minimum 8 bytes
 
         // Optimal hash count: k = (m/n) * ln(2)
-        let num_hashes = ((num_bits as f64 / expected_items as f64) * std::f64::consts::LN_2)
-            .ceil() as u32;
+        let num_hashes =
+            ((num_bits as f64 / expected_items as f64) * std::f64::consts::LN_2).ceil() as u32;
         let num_hashes = num_hashes.clamp(1, 30);
 
         let byte_count = num_bits.div_ceil(8);
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn test_from_bytes_invalid_hash_count() {
         let mut data = vec![0u8; 20]; // 12 header + 8 bits
-        // num_bits = 64, num_hashes = 0 (invalid), byte_count = 8
+                                      // num_bits = 64, num_hashes = 0 (invalid), byte_count = 8
         data[0..4].copy_from_slice(&64u32.to_le_bytes());
         data[4..8].copy_from_slice(&0u32.to_le_bytes()); // zero hashes
         data[8..12].copy_from_slice(&8u32.to_le_bytes());
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_from_bytes_bit_byte_mismatch() {
         let mut data = vec![0u8; 20]; // 12 header + 8 bits
-        // num_bits = 64, num_hashes = 3, byte_count = 7 (should be 8 for 64 bits)
+                                      // num_bits = 64, num_hashes = 3, byte_count = 7 (should be 8 for 64 bits)
         data[0..4].copy_from_slice(&64u32.to_le_bytes());
         data[4..8].copy_from_slice(&3u32.to_le_bytes());
         data[8..12].copy_from_slice(&7u32.to_le_bytes()); // Wrong!

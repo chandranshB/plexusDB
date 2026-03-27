@@ -4,8 +4,8 @@
 //! with a version number. On startup, we check the current version and run
 //! any pending migrations in order.
 
-use rusqlite::Connection;
 use crate::MetaError;
+use rusqlite::Connection;
 
 /// Current schema version. Increment when adding new migrations.
 const CURRENT_VERSION: u32 = 1;
@@ -18,7 +18,7 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MetaError> {
             version  INTEGER PRIMARY KEY,
             applied  TEXT NOT NULL DEFAULT (datetime('now')),
             description TEXT
-        );"
+        );",
     )?;
 
     let current: u32 = conn
@@ -34,7 +34,11 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MetaError> {
         return Ok(());
     }
 
-    tracing::info!(from = current, to = CURRENT_VERSION, "running metadata migrations");
+    tracing::info!(
+        from = current,
+        to = CURRENT_VERSION,
+        "running metadata migrations"
+    );
 
     for version in (current + 1)..=CURRENT_VERSION {
         let (sql, desc) = migration(version)?;
@@ -53,7 +57,9 @@ pub fn run_migrations(conn: &Connection) -> Result<(), MetaError> {
 fn migration(version: u32) -> Result<(&'static str, &'static str), MetaError> {
     match version {
         1 => Ok((MIGRATION_V1, "initial schema")),
-        _ => Err(MetaError::Migration(format!("unknown migration version: {version}"))),
+        _ => Err(MetaError::Migration(format!(
+            "unknown migration version: {version}"
+        ))),
     }
 }
 
@@ -253,6 +259,9 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(count_before, count_after, "idempotent run should not change table count");
+        assert_eq!(
+            count_before, count_after,
+            "idempotent run should not change table count"
+        );
     }
 }

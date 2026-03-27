@@ -1,9 +1,9 @@
 //! SSTable module — sorted persistent storage on disk.
 
 pub mod format;
-pub mod writer;
 pub mod reader;
+pub mod writer;
 
 pub use format::*;
-pub use writer::SsTableWriter;
 pub use reader::SsTableReader;
+pub use writer::SsTableWriter;

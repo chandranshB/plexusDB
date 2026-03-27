@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crc32fast::Hasher as CrcHasher;
 use parking_lot::Mutex;
 
-use crate::{Entry, EngineError};
+use crate::{EngineError, Entry};
 
 /// WAL record header size: length (4) + CRC32 (4) = 8 bytes.
 const RECORD_HEADER_SIZE: usize = 8;
@@ -68,7 +68,8 @@ impl Wal {
             .open(&path)
             .map_err(|e| EngineError::Wal(e.to_string()))?;
 
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .map_err(|e| EngineError::Wal(e.to_string()))?
             .len();
 
@@ -105,15 +106,18 @@ impl Wal {
         let offset = self.size.load(Ordering::Relaxed);
 
         // Write header: [length: u32][crc: u32]
-        inner.writer
+        inner
+            .writer
             .write_all(&(data.len() as u32).to_le_bytes())
             .map_err(|e| EngineError::Wal(e.to_string()))?;
-        inner.writer
+        inner
+            .writer
             .write_all(&crc.to_le_bytes())
             .map_err(|e| EngineError::Wal(e.to_string()))?;
 
         // Write entry data
-        inner.writer
+        inner
+            .writer
             .write_all(&data)
             .map_err(|e| EngineError::Wal(e.to_string()))?;
 
@@ -127,8 +131,15 @@ impl Wal {
     /// Flush the write buffer and sync to disk.
     pub fn sync(&self) -> Result<(), EngineError> {
         let mut inner = self.inner.lock();
-        inner.writer.flush().map_err(|e| EngineError::Wal(e.to_string()))?;
-        inner.writer.get_ref().sync_data().map_err(|e| EngineError::Wal(e.to_string()))?;
+        inner
+            .writer
+            .flush()
+            .map_err(|e| EngineError::Wal(e.to_string()))?;
+        inner
+            .writer
+            .get_ref()
+            .sync_data()
+            .map_err(|e| EngineError::Wal(e.to_string()))?;
         Ok(())
     }
 
@@ -158,8 +169,15 @@ impl Wal {
         let mut inner = self.inner.lock();
 
         // Flush and sync the old WAL
-        inner.writer.flush().map_err(|e| EngineError::Wal(e.to_string()))?;
-        inner.writer.get_ref().sync_data().map_err(|e| EngineError::Wal(e.to_string()))?;
+        inner
+            .writer
+            .flush()
+            .map_err(|e| EngineError::Wal(e.to_string()))?;
+        inner
+            .writer
+            .get_ref()
+            .sync_data()
+            .map_err(|e| EngineError::Wal(e.to_string()))?;
 
         let old_path = inner.path.clone();
 
@@ -185,7 +203,8 @@ impl Wal {
         let mut file = File::open(path)
             .map_err(|e| EngineError::Wal(format!("cannot open WAL {}: {e}", path.display())))?;
 
-        let file_size = file.metadata()
+        let file_size = file
+            .metadata()
             .map_err(|e| EngineError::Wal(e.to_string()))?
             .len();
 
@@ -281,7 +300,10 @@ fn find_or_create_wal(dir: &Path) -> Result<(PathBuf, u64), EngineError> {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if let Some(seq_str) = name.strip_prefix("wal_").and_then(|s| s.strip_suffix(".log")) {
+            if let Some(seq_str) = name
+                .strip_prefix("wal_")
+                .and_then(|s| s.strip_suffix(".log"))
+            {
                 if let Ok(seq) = seq_str.parse::<u64>() {
                     max_seq = max_seq.max(seq);
                 }

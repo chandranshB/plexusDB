@@ -4,8 +4,8 @@
 //! reads without decrypting the entire file.
 
 use aes_gcm::{
-    Aes256Gcm, Key, Nonce,
     aead::{Aead, KeyInit},
+    Aes256Gcm, Key, Nonce,
 };
 use hkdf::Hkdf;
 use rand::RngCore;
@@ -207,7 +207,10 @@ mod tests {
         // Try decrypting with wrong block_id — should fail because
         // per-block key derivation produces a different key
         let result = mgr.decrypt_block(&encrypted, b"block_2");
-        assert!(result.is_err(), "decryption with wrong block_id should fail");
+        assert!(
+            result.is_err(),
+            "decryption with wrong block_id should fail"
+        );
     }
 
     #[test]

@@ -3,9 +3,9 @@
 //! Each function takes a `&Connection` and performs a specific query.
 //! Callers should obtain the connection via `MetaStore::conn()`.
 
+use crate::MetaError;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use crate::MetaError;
 
 // ════════════════════════════════════════════════════════════════════
 // SSTable Manifest Queries
@@ -58,17 +58,14 @@ pub fn insert_sstable(conn: &Connection, info: &SsTableInfo) -> Result<i64, Meta
 }
 
 /// Get all SSTables at a given level, ordered by min_key.
-pub fn get_sstables_at_level(
-    conn: &Connection,
-    level: u32,
-) -> Result<Vec<SsTableInfo>, MetaError> {
+pub fn get_sstables_at_level(conn: &Connection, level: u32) -> Result<Vec<SsTableInfo>, MetaError> {
     let mut stmt = conn.prepare(
         "SELECT id, file_name, level, file_size, entry_count, min_key, max_key,
                 min_timestamp, max_timestamp, bloom_offset, index_offset,
                 checksum, storage_tier, s3_key
          FROM sstable_manifest
          WHERE level = ?1 AND compacted = 0
-         ORDER BY min_key"
+         ORDER BY min_key",
     )?;
 
     let rows = stmt.query_map(params![level], |row| {
@@ -105,7 +102,7 @@ pub fn get_all_active_sstables(conn: &Connection) -> Result<Vec<SsTableInfo>, Me
                 checksum, storage_tier, s3_key
          FROM sstable_manifest
          WHERE compacted = 0
-         ORDER BY level, min_key"
+         ORDER BY level, min_key",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -216,7 +213,13 @@ pub fn upsert_node(conn: &Connection, node: &NodeRecord) -> Result<(), MetaError
              role = excluded.role,
              incarnation = excluded.incarnation,
              last_heartbeat = datetime('now')",
-        params![node.node_id, node.address, node.state, node.role, node.incarnation],
+        params![
+            node.node_id,
+            node.address,
+            node.state,
+            node.role,
+            node.incarnation
+        ],
     )?;
     Ok(())
 }
@@ -225,7 +228,7 @@ pub fn upsert_node(conn: &Connection, node: &NodeRecord) -> Result<(), MetaError
 pub fn get_alive_nodes(conn: &Connection) -> Result<Vec<NodeRecord>, MetaError> {
     let mut stmt = conn.prepare(
         "SELECT node_id, address, state, role, incarnation
-         FROM cluster_nodes WHERE state = 'alive'"
+         FROM cluster_nodes WHERE state = 'alive'",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok(NodeRecord {

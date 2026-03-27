@@ -143,14 +143,17 @@ impl GossipEngine {
     /// Add a seed node to bootstrap the cluster.
     pub fn add_seed(&self, node_id: String, address: SocketAddr) {
         let mut members = self.members.write();
-        members.insert(node_id.clone(), Member {
-            node_id,
-            address,
-            state: MemberState::Alive,
-            incarnation: 0,
-            last_state_change: now_millis(),
-            metadata: HashMap::new(),
-        });
+        members.insert(
+            node_id.clone(),
+            Member {
+                node_id,
+                address,
+                state: MemberState::Alive,
+                incarnation: 0,
+                last_state_change: now_millis(),
+                metadata: HashMap::new(),
+            },
+        );
     }
 
     /// Get all alive members.
@@ -170,13 +173,21 @@ impl GossipEngine {
 
     /// Get the number of alive members.
     pub fn alive_count(&self) -> usize {
-        self.members.read().values().filter(|m| m.state == MemberState::Alive).count()
+        self.members
+            .read()
+            .values()
+            .filter(|m| m.state == MemberState::Alive)
+            .count()
     }
 
     /// Process an incoming gossip message.
     pub fn handle_message(&self, msg: GossipMessage) -> Option<GossipMessage> {
         match msg {
-            GossipMessage::Ping { sender: _sender, incarnation: _incarnation, updates } => {
+            GossipMessage::Ping {
+                sender: _sender,
+                incarnation: _incarnation,
+                updates,
+            } => {
                 // Apply piggybacked updates
                 self.apply_updates(&updates);
 
@@ -189,7 +200,11 @@ impl GossipEngine {
                 })
             }
 
-            GossipMessage::Ack { sender, incarnation, updates } => {
+            GossipMessage::Ack {
+                sender,
+                incarnation,
+                updates,
+            } => {
                 self.apply_updates(&updates);
 
                 // Mark sender as alive
@@ -205,16 +220,23 @@ impl GossipEngine {
                 None
             }
 
-            GossipMessage::Join { node_id, address, metadata } => {
+            GossipMessage::Join {
+                node_id,
+                address,
+                metadata,
+            } => {
                 let mut members = self.members.write();
-                members.insert(node_id.clone(), Member {
-                    node_id: node_id.clone(),
-                    address,
-                    state: MemberState::Alive,
-                    incarnation: 0,
-                    last_state_change: now_millis(),
-                    metadata,
-                });
+                members.insert(
+                    node_id.clone(),
+                    Member {
+                        node_id: node_id.clone(),
+                        address,
+                        state: MemberState::Alive,
+                        incarnation: 0,
+                        last_state_change: now_millis(),
+                        metadata,
+                    },
+                );
 
                 tracing::info!(node = %node_id, addr = %address, "node joined cluster");
 
@@ -239,7 +261,10 @@ impl GossipEngine {
                 None
             }
 
-            GossipMessage::PingReq { sender: _sender, target: _target } => {
+            GossipMessage::PingReq {
+                sender: _sender,
+                target: _target,
+            } => {
                 // Forward ping to target on behalf of sender
                 // In real implementation, we'd send a Ping to target
                 // and relay the response back to sender
@@ -263,14 +288,17 @@ impl GossipEngine {
                 }
                 None => {
                     if let Some(addr) = update.address {
-                        members.insert(update.node_id.clone(), Member {
-                            node_id: update.node_id.clone(),
-                            address: addr,
-                            state: update.state,
-                            incarnation: update.incarnation,
-                            last_state_change: now_millis(),
-                            metadata: HashMap::new(),
-                        });
+                        members.insert(
+                            update.node_id.clone(),
+                            Member {
+                                node_id: update.node_id.clone(),
+                                address: addr,
+                                state: update.state,
+                                incarnation: update.incarnation,
+                                last_state_change: now_millis(),
+                                metadata: HashMap::new(),
+                            },
+                        );
                     }
                 }
             }

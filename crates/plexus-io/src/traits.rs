@@ -39,20 +39,11 @@ pub struct IoCommand {
 #[derive(Debug, Clone)]
 pub enum IoOp {
     /// Read `len` bytes from `offset` in the file.
-    Read {
-        fd: i32,
-        offset: u64,
-        len: usize,
-    },
+    Read { fd: i32, offset: u64, len: usize },
     /// Write buffer contents at `offset` in the file.
-    Write {
-        fd: i32,
-        offset: u64,
-    },
+    Write { fd: i32, offset: u64 },
     /// Sync file data to disk (fdatasync).
-    Fsync {
-        fd: i32,
-    },
+    Fsync { fd: i32 },
 }
 
 /// Result of a completed I/O operation.
@@ -107,31 +98,17 @@ pub trait IoBackend: Send + Sync {
     ///
     /// Returns the buffer with data. The caller is responsible for returning
     /// the buffer to the pool when done.
-    fn read(
-        &self,
-        handle: &FileHandle,
-        offset: u64,
-        len: usize,
-    ) -> Result<AlignedBuf, IoError>;
+    fn read(&self, handle: &FileHandle, offset: u64, len: usize) -> Result<AlignedBuf, IoError>;
 
     /// Write an aligned buffer to the file at `offset`.
     ///
     /// Returns the number of bytes written.
-    fn write(
-        &self,
-        handle: &FileHandle,
-        offset: u64,
-        buf: &AlignedBuf,
-    ) -> Result<usize, IoError>;
+    fn write(&self, handle: &FileHandle, offset: u64, buf: &AlignedBuf) -> Result<usize, IoError>;
 
     /// Append data to the end of the file.
     ///
     /// Returns the offset at which the data was written and bytes written.
-    fn append(
-        &self,
-        handle: &FileHandle,
-        buf: &AlignedBuf,
-    ) -> Result<(u64, usize), IoError>;
+    fn append(&self, handle: &FileHandle, buf: &AlignedBuf) -> Result<(u64, usize), IoError>;
 
     /// Sync file data to stable storage.
     fn fsync(&self, handle: &FileHandle) -> Result<(), IoError>;

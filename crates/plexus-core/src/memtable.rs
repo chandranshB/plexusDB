@@ -9,8 +9,8 @@
 //! read-only) and a new active MemTable is created. A background thread
 //! then flushes the frozen MemTable to an SSTable on disk.
 
-use std::sync::atomic::{AtomicU64, AtomicBool, Ordering};
 use crossbeam_skiplist::SkipMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::Entry;
 
@@ -130,11 +130,7 @@ impl MemTable {
     /// Freeze this MemTable (make it read-only).
     pub fn freeze(&self) {
         self.frozen.store(true, Ordering::Release);
-        tracing::debug!(
-            size = self.size(),
-            count = self.count(),
-            "MemTable frozen"
-        );
+        tracing::debug!(size = self.size(), count = self.count(), "MemTable frozen");
     }
 
     /// Is this MemTable frozen?
@@ -203,8 +199,10 @@ mod tests {
     fn test_put_and_get() {
         let mt = MemTable::new();
 
-        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1)).unwrap();
-        mt.put(Entry::put(b"key2".to_vec(), b"value2".to_vec(), 2)).unwrap();
+        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1))
+            .unwrap();
+        mt.put(Entry::put(b"key2".to_vec(), b"value2".to_vec(), 2))
+            .unwrap();
 
         let result = mt.get(b"key1").unwrap();
         assert_eq!(result.value, Some(b"value1".to_vec()));
@@ -219,8 +217,10 @@ mod tests {
     fn test_latest_version_wins() {
         let mt = MemTable::new();
 
-        mt.put(Entry::put(b"key1".to_vec(), b"old".to_vec(), 1)).unwrap();
-        mt.put(Entry::put(b"key1".to_vec(), b"new".to_vec(), 2)).unwrap();
+        mt.put(Entry::put(b"key1".to_vec(), b"old".to_vec(), 1))
+            .unwrap();
+        mt.put(Entry::put(b"key1".to_vec(), b"new".to_vec(), 2))
+            .unwrap();
 
         let result = mt.get(b"key1").unwrap();
         assert_eq!(result.value, Some(b"new".to_vec()));
@@ -231,7 +231,8 @@ mod tests {
     fn test_tombstone() {
         let mt = MemTable::new();
 
-        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1)).unwrap();
+        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1))
+            .unwrap();
         mt.put(Entry::delete(b"key1".to_vec(), 2)).unwrap();
 
         let result = mt.get(b"key1").unwrap();
@@ -242,7 +243,8 @@ mod tests {
     #[test]
     fn test_freeze_prevents_writes() {
         let mt = MemTable::new();
-        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1)).unwrap();
+        mt.put(Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1))
+            .unwrap();
         mt.freeze();
 
         let result = mt.put(Entry::put(b"key2".to_vec(), b"value2".to_vec(), 2));
@@ -269,7 +271,8 @@ mod tests {
         assert_eq!(mt.size(), 0);
         assert_eq!(mt.count(), 0);
 
-        mt.put(Entry::put(b"key".to_vec(), b"value".to_vec(), 1)).unwrap();
+        mt.put(Entry::put(b"key".to_vec(), b"value".to_vec(), 1))
+            .unwrap();
         assert!(mt.size() > 0);
         assert_eq!(mt.count(), 1);
     }

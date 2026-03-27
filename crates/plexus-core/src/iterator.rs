@@ -196,13 +196,9 @@ mod tests {
 
     #[test]
     fn test_deduplication_newest_wins() {
-        let src1 = VecSource::new(vec![
-            Entry::put(b"key".to_vec(), b"old".to_vec(), 1),
-        ]);
+        let src1 = VecSource::new(vec![Entry::put(b"key".to_vec(), b"old".to_vec(), 1)]);
 
-        let src2 = VecSource::new(vec![
-            Entry::put(b"key".to_vec(), b"new".to_vec(), 2),
-        ]);
+        let src2 = VecSource::new(vec![Entry::put(b"key".to_vec(), b"new".to_vec(), 2)]);
 
         let mut merger = MergeIterator::new(vec![Box::new(src1), Box::new(src2)]);
         let result = merger.collect_all();
@@ -214,13 +210,9 @@ mod tests {
 
     #[test]
     fn test_tombstone_preserved() {
-        let src1 = VecSource::new(vec![
-            Entry::put(b"key".to_vec(), b"value".to_vec(), 1),
-        ]);
+        let src1 = VecSource::new(vec![Entry::put(b"key".to_vec(), b"value".to_vec(), 1)]);
 
-        let src2 = VecSource::new(vec![
-            Entry::delete(b"key".to_vec(), 2),
-        ]);
+        let src2 = VecSource::new(vec![Entry::delete(b"key".to_vec(), 2)]);
 
         let mut merger = MergeIterator::new(vec![Box::new(src1), Box::new(src2)]);
         let result = merger.collect_all();

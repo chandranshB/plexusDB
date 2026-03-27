@@ -7,10 +7,10 @@
 //! on Windows) and does NOT use `O_DIRECT`. It still uses [`AlignedBuf`]
 //! for API compatibility.
 
+use parking_lot::Mutex;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use parking_lot::Mutex;
 
 use crate::aligned::AlignedBuf;
 use crate::traits::*;
@@ -52,31 +52,23 @@ impl Default for FallbackBackend {
 impl IoBackend for FallbackBackend {
     fn open(&self, path: &Path, mode: OpenMode, _direct: bool) -> Result<FileHandle, IoError> {
         let file = match mode {
-            OpenMode::ReadOnly => {
-                OpenOptions::new().read(true).open(path)?
-            }
-            OpenMode::WriteOnly => {
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(false)
-                    .open(path)?
-            }
-            OpenMode::ReadWrite => {
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .truncate(false)
-                    .open(path)?
-            }
-            OpenMode::CreateNew => {
-                OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create_new(true)
-                    .open(path)?
-            }
+            OpenMode::ReadOnly => OpenOptions::new().read(true).open(path)?,
+            OpenMode::WriteOnly => OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)?,
+            OpenMode::ReadWrite => OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)?,
+            OpenMode::CreateNew => OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)?,
         };
 
         let fd = self.store_file(file);
@@ -99,12 +91,7 @@ impl IoBackend for FallbackBackend {
         Ok(())
     }
 
-    fn read(
-        &self,
-        handle: &FileHandle,
-        offset: u64,
-        len: usize,
-    ) -> Result<AlignedBuf, IoError> {
+    fn read(&self, handle: &FileHandle, offset: u64, len: usize) -> Result<AlignedBuf, IoError> {
         let mut files = self.files.lock();
         let file = files
             .get_mut(handle.fd as usize)
@@ -119,12 +106,7 @@ impl IoBackend for FallbackBackend {
         Ok(AlignedBuf::from_slice(&data))
     }
 
-    fn write(
-        &self,
-        handle: &FileHandle,
-        offset: u64,
-        buf: &AlignedBuf,
-    ) -> Result<usize, IoError> {
+    fn write(&self, handle: &FileHandle, offset: u64, buf: &AlignedBuf) -> Result<usize, IoError> {
         let mut files = self.files.lock();
         let file = files
             .get_mut(handle.fd as usize)
@@ -136,11 +118,7 @@ impl IoBackend for FallbackBackend {
         Ok(written)
     }
 
-    fn append(
-        &self,
-        handle: &FileHandle,
-        buf: &AlignedBuf,
-    ) -> Result<(u64, usize), IoError> {
+    fn append(&self, handle: &FileHandle, buf: &AlignedBuf) -> Result<(u64, usize), IoError> {
         let mut files = self.files.lock();
         let file = files
             .get_mut(handle.fd as usize)

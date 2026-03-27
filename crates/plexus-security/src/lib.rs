@@ -2,9 +2,9 @@
 //!
 //! Encryption, TLS, and authentication for PlexusDB.
 
+pub mod auth;
 pub mod encryption;
 pub mod tls;
-pub mod auth;
 
 /// Security errors.
 #[derive(Debug, thiserror::Error)]

@@ -17,7 +17,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use crate::bloom::BloomFilter;
 use crate::sstable::format::*;
-use crate::{Entry, EngineConfig, EngineError};
+use crate::{EngineConfig, EngineError, Entry};
 
 /// Builds an SSTable file from sorted entries.
 pub struct SsTableWriter {
@@ -176,10 +176,8 @@ impl SsTableWriter {
 
         // Compress block
         let compressed = match self.config.compression {
-            Compression::Zstd => {
-                zstd::encode_all(self.current_block.as_slice(), 3)
-                    .map_err(|e| EngineError::SsTable(format!("compression failed: {e}")))?
-            }
+            Compression::Zstd => zstd::encode_all(self.current_block.as_slice(), 3)
+                .map_err(|e| EngineError::SsTable(format!("compression failed: {e}")))?,
             Compression::None => self.current_block.clone(),
         };
 
@@ -249,6 +247,7 @@ impl SsTableWriter {
             index_offset,
             entry_count: self.entry_count,
             checksum: checksum_bytes,
+            compression: self.config.compression,
         };
 
         let footer_data = footer.encode();
@@ -303,5 +302,154 @@ mod hex {
             s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
         }
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Entry;
+    use tempfile::TempDir;
+
+    fn make_entries(count: usize) -> Vec<Entry> {
+        (0..count)
+            .map(|i| {
+                Entry::put(
+                    format!("key_{i:06}").into_bytes(),
+                    format!("value_{i}").into_bytes(),
+                    i as u64 + 1,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_write_and_finish_empty() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("empty.sst");
+        let writer = SsTableWriter::new(&path, SsTableWriterConfig::default()).unwrap();
+        let result = writer.finish().unwrap();
+
+        assert!(path.exists());
+        assert_eq!(result.entry_count, 0);
+        assert!(result.file_size >= crate::sstable::format::FOOTER_SIZE as u64);
+    }
+
+    #[test]
+    fn test_write_single_entry() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("single.sst");
+        let mut writer = SsTableWriter::new(&path, SsTableWriterConfig::default()).unwrap();
+
+        let entry = Entry::put(b"hello".to_vec(), b"world".to_vec(), 42);
+        writer.add(&entry).unwrap();
+        let result = writer.finish().unwrap();
+
+        assert_eq!(result.entry_count, 1);
+        assert_eq!(result.min_key, b"hello");
+        assert_eq!(result.max_key, b"hello");
+        assert_eq!(result.min_timestamp, 42);
+        assert_eq!(result.max_timestamp, 42);
+        assert!(!result.checksum.is_empty());
+    }
+
+    #[test]
+    fn test_write_multiple_entries_sorted() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("multi.sst");
+        let mut writer = SsTableWriter::new(&path, SsTableWriterConfig::default()).unwrap();
+
+        let entries = make_entries(100);
+        for e in &entries {
+            writer.add(e).unwrap();
+        }
+        let result = writer.finish().unwrap();
+
+        assert_eq!(result.entry_count, 100);
+        assert_eq!(result.min_key, b"key_000000");
+        assert_eq!(result.max_key, b"key_000099");
+        assert_eq!(result.min_timestamp, 1);
+        assert_eq!(result.max_timestamp, 100);
+    }
+
+    #[test]
+    fn test_write_with_tombstones() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("tombstone.sst");
+        let mut writer = SsTableWriter::new(&path, SsTableWriterConfig::default()).unwrap();
+
+        writer
+            .add(&Entry::put(b"a".to_vec(), b"1".to_vec(), 1))
+            .unwrap();
+        writer.add(&Entry::delete(b"b".to_vec(), 2)).unwrap();
+        writer
+            .add(&Entry::put(b"c".to_vec(), b"3".to_vec(), 3))
+            .unwrap();
+        let result = writer.finish().unwrap();
+
+        assert_eq!(result.entry_count, 3);
+    }
+
+    #[test]
+    fn test_write_no_compression() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("nocomp.sst");
+        let config = SsTableWriterConfig {
+            compression: Compression::None,
+            ..SsTableWriterConfig::default()
+        };
+        let mut writer = SsTableWriter::new(&path, config).unwrap();
+
+        for e in make_entries(50) {
+            writer.add(&e).unwrap();
+        }
+        let result = writer.finish().unwrap();
+        assert_eq!(result.entry_count, 50);
+        assert!(result.file_size > 0);
+    }
+
+    #[test]
+    fn test_write_forces_multiple_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("multiblock.sst");
+        // Very small block size to force multiple blocks
+        let config = SsTableWriterConfig {
+            block_size: 64,
+            compression: Compression::None,
+            ..SsTableWriterConfig::default()
+        };
+        let mut writer = SsTableWriter::new(&path, config).unwrap();
+
+        for e in make_entries(200) {
+            writer.add(&e).unwrap();
+        }
+        let result = writer.finish().unwrap();
+
+        assert_eq!(result.entry_count, 200);
+        assert!(
+            result.block_count > 1,
+            "should have multiple blocks with tiny block size"
+        );
+    }
+
+    #[test]
+    fn test_bloom_offset_before_index_offset() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("offsets.sst");
+        let mut writer = SsTableWriter::new(&path, SsTableWriterConfig::default()).unwrap();
+
+        for e in make_entries(10) {
+            writer.add(&e).unwrap();
+        }
+        let result = writer.finish().unwrap();
+
+        assert!(
+            result.bloom_offset < result.index_offset,
+            "bloom filter must come before index block"
+        );
+        assert!(
+            result.index_offset < result.file_size,
+            "index block must come before end of file"
+        );
     }
 }

@@ -4,9 +4,9 @@
 //! This is especially critical when PlexusDB manages its own memory via
 //! `O_DIRECT` (bypassing the kernel page cache).
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use parking_lot::Mutex;
 
 /// Cache key: (SSTable file name, block index).
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]

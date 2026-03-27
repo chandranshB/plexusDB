@@ -1,7 +1,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = "src/generated";
     std::fs::create_dir_all(out_dir)?;
-    
+
     let proto_file = "../../proto/plexus.proto";
     if std::path::Path::new(proto_file).exists() {
         // Only attempt codegen if protoc is available

@@ -2,49 +2,131 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Deny warnings in CI — keeps the codebase clean
+  RUSTFLAGS: "-D warnings"
 
 jobs:
+  # ── Format Check ────────────────────────────────────────────────────────────
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ── Clippy ──────────────────────────────────────────────────────────────────
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (all targets, all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+  # ── Tests (cross-platform matrix) ───────────────────────────────────────────
   test:
-    name: Test on ${{ matrix.os }}
+    name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
-        
-    - name: Install Protoc (Ubuntu)
-      if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      
-    - name: Install Protoc (macOS)
-      if: runner.os == 'macOS'
-      run: brew install protobuf
-      
-    - name: Install Protoc (Windows)
-      if: runner.os == 'Windows'
-      run: choco install protoc
-      
-    - name: Rust Cache
-      uses: Swatinem/rust-cache@v2
-      
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-      
-    - name: Lint with Clippy
-      run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      
-    - name: Run tests
-      run: cargo test --workspace --all-targets --all-features
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc --no-progress
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+
+      - name: Build (debug)
+        run: cargo build --workspace --all-targets
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc
+
+  # ── MSRV Check ──────────────────────────────────────────────────────────────
+  msrv:
+    name: MSRV (Rust 1.75)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.75
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - name: Check MSRV
+        run: cargo check --workspace --all-targets
+
+  # ── Release Build ────────────────────────────────────────────────────────────
+  build-release:
+    name: Release Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        run: choco install protoc --no-progress
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.os }}
+      - name: Build release binary
+        run: cargo build --release --bin plexus
+
+  # ── Security Audit ───────────────────────────────────────────────────────────
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

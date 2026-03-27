@@ -1,11 +1,11 @@
 //! Axum routes for the Web UI.
 
 use axum::{
-    Router,
     extract::State,
     http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Json},
     routing::get,
+    Router,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -74,5 +74,96 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
                 .into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    fn make_state() -> Arc<WebState> {
+        Arc::new(WebState {
+            node_id: "test-node".to_string(),
+            version: "0.1.0".to_string(),
+            start_time: std::time::Instant::now(),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_health_endpoint() {
+        let app = router(make_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_status_endpoint() {
+        let app = router(make_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["node_id"], "test-node");
+        assert_eq!(json["version"], "0.1.0");
+        assert_eq!(json["status"], "running");
+        assert!(json["uptime_seconds"].as_u64().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_index_endpoint() {
+        let app = router(make_state());
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        // Should return 200 (either the embedded HTML or the fallback)
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_static_returns_404() {
+        let app = router(make_state());
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/nonexistent-file.xyz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

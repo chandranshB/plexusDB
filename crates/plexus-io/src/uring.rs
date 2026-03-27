@@ -94,8 +94,9 @@ mod inner {
     impl IoBackend for UringBackend {
         fn open(&self, path: &Path, mode: OpenMode, direct: bool) -> Result<FileHandle, IoError> {
             let path_str = path.to_string_lossy().to_string();
-            let c_path = std::ffi::CString::new(path_str.as_bytes())
-                .map_err(|e| IoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+            let c_path = std::ffi::CString::new(path_str.as_bytes()).map_err(|e| {
+                IoError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e))
+            })?;
 
             let flags = self.open_flags(mode, direct);
             let fd = unsafe { libc::open(c_path.as_ptr(), flags, 0o644) };
@@ -174,11 +175,7 @@ mod inner {
             Ok(ret as usize)
         }
 
-        fn append(
-            &self,
-            handle: &FileHandle,
-            buf: &AlignedBuf,
-        ) -> Result<(u64, usize), IoError> {
+        fn append(&self, handle: &FileHandle, buf: &AlignedBuf) -> Result<(u64, usize), IoError> {
             let offset = self.file_size(handle)?;
             let written = self.write(handle, offset, buf)?;
             Ok((offset, written))
@@ -218,3 +215,79 @@ mod inner {
 
 #[cfg(target_os = "linux")]
 pub use inner::*;
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use crate::aligned::AlignedBuf;
+    use crate::traits::{IoBackend, OpenMode};
+    use tempfile::TempDir;
+
+    fn backend() -> UringBackend {
+        UringBackend::with_defaults().expect("io_uring should be available on Linux")
+    }
+
+    #[test]
+    fn test_open_and_close() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.dat");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let b = backend();
+        let handle = b.open(&path, OpenMode::ReadOnly, false).unwrap();
+        assert_eq!(handle.fd >= 0, true);
+        b.close(handle).unwrap();
+    }
+
+    #[test]
+    fn test_write_and_read() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("rw.dat");
+
+        let b = backend();
+        let handle = b.open(&path, OpenMode::ReadWrite, false).unwrap();
+
+        let data = b"plexus io_uring test data";
+        let buf = AlignedBuf::from_slice(data);
+        let written = b.write(&handle, 0, &buf).unwrap();
+        assert_eq!(written, data.len());
+
+        b.fsync(&handle).unwrap();
+
+        let read_buf = b.read(&handle, 0, data.len()).unwrap();
+        assert_eq!(&read_buf[..data.len()], data);
+
+        b.close(handle).unwrap();
+    }
+
+    #[test]
+    fn test_file_size() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("size.dat");
+        std::fs::write(&path, b"12345678").unwrap();
+
+        let b = backend();
+        let handle = b.open(&path, OpenMode::ReadOnly, false).unwrap();
+        let size = b.file_size(&handle).unwrap();
+        assert_eq!(size, 8);
+        b.close(handle).unwrap();
+    }
+
+    #[test]
+    fn test_exists_and_delete() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("del.dat");
+        std::fs::write(&path, b"data").unwrap();
+
+        let b = backend();
+        assert!(b.exists(&path));
+        b.delete(&path).unwrap();
+        assert!(!b.exists(&path));
+    }
+
+    #[test]
+    fn test_backend_name() {
+        let b = backend();
+        assert!(b.name().contains("io_uring"));
+    }
+}

@@ -116,10 +116,7 @@ impl MerkleTree {
             }
         }
 
-        tracing::info!(
-            diff_ranges = diffs.len(),
-            "Merkle tree comparison complete"
-        );
+        tracing::info!(diff_ranges = diffs.len(), "Merkle tree comparison complete");
 
         diffs
     }

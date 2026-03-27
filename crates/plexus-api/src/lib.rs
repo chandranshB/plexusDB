@@ -14,9 +14,18 @@ pub mod proto {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn test_api_compiles() {
-        // Just a sanity check to ensure the crate compiles and tests are not empty
-        assert!(true, "plexus-api crate compiled successfully");
+    fn test_service_creation() {
+        let svc = service::PlexusService::new("test-node-1".to_string());
+        assert_eq!(svc.node_id(), "test-node-1");
+        assert!(!svc.version().is_empty());
+    }
+
+    #[test]
+    fn test_service_version_matches_cargo() {
+        let svc = service::PlexusService::new("node".to_string());
+        assert_eq!(svc.version(), env!("CARGO_PKG_VERSION"));
     }
 }

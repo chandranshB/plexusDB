@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
-use plexus_meta::MetaStore;
 use plexus_meta::queries::{self, SsTableInfo};
+use plexus_meta::MetaStore;
 
 use crate::EngineError;
 
@@ -39,7 +39,11 @@ pub struct SsTableEntry {
 
 impl Manifest {
     /// Create a new manifest backed by the given metadata store.
-    pub fn new(meta: Arc<MetaStore>, data_dir: &Path, max_levels: usize) -> Result<Self, EngineError> {
+    pub fn new(
+        meta: Arc<MetaStore>,
+        data_dir: &Path,
+        max_levels: usize,
+    ) -> Result<Self, EngineError> {
         let manifest = Self {
             meta,
             levels: RwLock::new(vec![Vec::new(); max_levels]),
@@ -100,10 +104,7 @@ impl Manifest {
     /// Get all SSTables at a given level.
     pub fn get_level(&self, level: u32) -> Vec<SsTableEntry> {
         let levels = self.levels.read();
-        levels
-            .get(level as usize)
-            .cloned()
-            .unwrap_or_default()
+        levels.get(level as usize).cloned().unwrap_or_default()
     }
 
     /// Get the number of SSTables at each level.
@@ -127,12 +128,7 @@ impl Manifest {
     }
 
     /// Get SSTables whose key range overlaps with [min_key, max_key].
-    pub fn get_overlapping(
-        &self,
-        level: u32,
-        min_key: &[u8],
-        max_key: &[u8],
-    ) -> Vec<SsTableEntry> {
+    pub fn get_overlapping(&self, level: u32, min_key: &[u8], max_key: &[u8]) -> Vec<SsTableEntry> {
         self.get_level(level)
             .into_iter()
             .filter(|sst| {
@@ -151,7 +147,11 @@ impl Manifest {
     /// Total data size across all levels.
     pub fn total_size(&self) -> u64 {
         let levels = self.levels.read();
-        levels.iter().flat_map(|l| l.iter()).map(|e| e.file_size).sum()
+        levels
+            .iter()
+            .flat_map(|l| l.iter())
+            .map(|e| e.file_size)
+            .sum()
     }
 }
 

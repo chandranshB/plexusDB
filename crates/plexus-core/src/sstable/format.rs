@@ -64,6 +64,8 @@ pub struct Footer {
     pub entry_count: u64,
     /// Blake3 checksum of the entire file (excluding footer)
     pub checksum: [u8; 8], // First 8 bytes of blake3 hash
+    /// Compression algorithm used for data blocks (stored in reserved byte 44).
+    pub compression: Compression,
 }
 
 impl Footer {
@@ -76,7 +78,12 @@ impl Footer {
         buf[20..28].copy_from_slice(&self.index_offset.to_le_bytes());
         buf[28..36].copy_from_slice(&self.entry_count.to_le_bytes());
         buf[36..44].copy_from_slice(&self.checksum);
-        // bytes 44..48 reserved (padding)
+        // byte 44: compression type (0 = None, 1 = Zstd)
+        buf[44] = match self.compression {
+            Compression::None => 0,
+            Compression::Zstd => 1,
+        };
+        // bytes 45..48 reserved
         buf
     }
 
@@ -96,6 +103,10 @@ impl Footer {
         let index_offset = u64::from_le_bytes(data[20..28].try_into().unwrap());
         let entry_count = u64::from_le_bytes(data[28..36].try_into().unwrap());
         let checksum: [u8; 8] = data[36..44].try_into().unwrap();
+        let compression = match data[44] {
+            1 => Compression::Zstd,
+            _ => Compression::None,
+        };
 
         Ok(Self {
             magic,
@@ -104,6 +115,7 @@ impl Footer {
             index_offset,
             entry_count,
             checksum,
+            compression,
         })
     }
 }
@@ -158,20 +170,28 @@ impl IndexEntry {
         // first_key
         let fk_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
-        if pos + fk_len > data.len() { return Err("first_key overflow"); }
+        if pos + fk_len > data.len() {
+            return Err("first_key overflow");
+        }
         let first_key = data[pos..pos + fk_len].to_vec();
         pos += fk_len;
 
         // last_key
-        if pos + 2 > data.len() { return Err("missing last_key length"); }
+        if pos + 2 > data.len() {
+            return Err("missing last_key length");
+        }
         let lk_len = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         pos += 2;
-        if pos + lk_len > data.len() { return Err("last_key overflow"); }
+        if pos + lk_len > data.len() {
+            return Err("last_key overflow");
+        }
         let last_key = data[pos..pos + lk_len].to_vec();
         pos += lk_len;
 
         // Fixed fields: offset(8) + length(4) + uncompressed(4) + checksum(8) = 24
-        if pos + 24 > data.len() { return Err("missing fixed fields"); }
+        if pos + 24 > data.len() {
+            return Err("missing fixed fields");
+        }
 
         let offset = u64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
         pos += 8;
@@ -216,6 +236,7 @@ mod tests {
             index_offset: 2000,
             entry_count: 50000,
             checksum: [1, 2, 3, 4, 5, 6, 7, 8],
+            compression: Compression::Zstd,
         };
 
         let encoded = footer.encode();
@@ -229,6 +250,23 @@ mod tests {
         assert_eq!(decoded.index_offset, 2000);
         assert_eq!(decoded.entry_count, 50000);
         assert_eq!(decoded.checksum, [1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(decoded.compression, Compression::Zstd);
+    }
+
+    #[test]
+    fn test_footer_compression_none_roundtrip() {
+        let footer = Footer {
+            magic: *MAGIC,
+            version: FORMAT_VERSION,
+            meta_offset: 100,
+            index_offset: 200,
+            entry_count: 10,
+            checksum: [0u8; 8],
+            compression: Compression::None,
+        };
+        let encoded = footer.encode();
+        let decoded = Footer::decode(&encoded).unwrap();
+        assert_eq!(decoded.compression, Compression::None);
     }
 
     #[test]

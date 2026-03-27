@@ -5,7 +5,7 @@
 //! a heap-allocated buffer with guaranteed 4096-byte alignment that enables
 //! the kernel to perform DMA directly to/from the drive.
 
-use std::alloc::{Layout, alloc, dealloc};
+use std::alloc::{alloc, dealloc, Layout};
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
@@ -41,8 +41,7 @@ impl AlignedBuf {
     pub fn new(capacity: usize) -> Self {
         // Clamp to at least BLOCK_SIZE — zero-size alloc is undefined behavior.
         let capacity = round_up(capacity, BLOCK_SIZE).max(BLOCK_SIZE);
-        let layout = Layout::from_size_align(capacity, BLOCK_SIZE)
-            .expect("invalid layout");
+        let layout = Layout::from_size_align(capacity, BLOCK_SIZE).expect("invalid layout");
 
         // SAFETY: Layout is valid (non-zero size, power-of-two alignment).
         let ptr = unsafe { alloc(layout) };
@@ -180,8 +179,8 @@ impl DerefMut for AlignedBuf {
 
 impl Drop for AlignedBuf {
     fn drop(&mut self) {
-        let layout = Layout::from_size_align(self.capacity, BLOCK_SIZE)
-            .expect("invalid layout in drop");
+        let layout =
+            Layout::from_size_align(self.capacity, BLOCK_SIZE).expect("invalid layout in drop");
         // SAFETY: ptr was allocated with this exact layout.
         unsafe {
             dealloc(self.ptr.as_ptr(), layout);
@@ -200,7 +199,10 @@ impl std::fmt::Debug for AlignedBuf {
         f.debug_struct("AlignedBuf")
             .field("len", &self.len)
             .field("capacity", &self.capacity)
-            .field("aligned", &((self.ptr.as_ptr() as usize).is_multiple_of(BLOCK_SIZE)))
+            .field(
+                "aligned",
+                &((self.ptr.as_ptr() as usize).is_multiple_of(BLOCK_SIZE)),
+            )
             .finish()
     }
 }

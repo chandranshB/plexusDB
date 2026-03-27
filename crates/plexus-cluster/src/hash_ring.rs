@@ -3,9 +3,9 @@
 //! Uses virtual nodes to ensure even key distribution across physical nodes.
 //! When a node joins or leaves, only ~1/N of keys need to migrate.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use xxhash_rust::xxh3::xxh3_64;
-use serde::{Deserialize, Serialize};
 
 /// Number of virtual nodes per physical node.
 const DEFAULT_VNODES: usize = 256;
@@ -48,10 +48,13 @@ impl HashRing {
         for i in 0..self.vnodes_per_node {
             let vnode_key = format!("{node_id}:{i}");
             let hash = xxh3_64(vnode_key.as_bytes());
-            self.ring.insert(hash, RingNode {
-                node_id: node_id.to_string(),
-                address: address.to_string(),
-            });
+            self.ring.insert(
+                hash,
+                RingNode {
+                    node_id: node_id.to_string(),
+                    address: address.to_string(),
+                },
+            );
         }
         self.node_count += 1;
 
@@ -216,19 +219,25 @@ mod tests {
 
         // Record assignments
         let keys: Vec<Vec<u8>> = (0..1000).map(|i| format!("k{i}").into_bytes()).collect();
-        let before: Vec<String> = keys.iter()
+        let before: Vec<String> = keys
+            .iter()
             .map(|k| ring.get_node(k).unwrap().node_id.clone())
             .collect();
 
         // Add a third node
         ring.add_node("node-3", "3:9090");
 
-        let after: Vec<String> = keys.iter()
+        let after: Vec<String> = keys
+            .iter()
             .map(|k| ring.get_node(k).unwrap().node_id.clone())
             .collect();
 
         // Count how many keys moved
-        let moved = before.iter().zip(after.iter()).filter(|(a, b)| a != b).count();
+        let moved = before
+            .iter()
+            .zip(after.iter())
+            .filter(|(a, b)| a != b)
+            .count();
         let move_ratio = moved as f64 / keys.len() as f64;
 
         // Should be roughly 1/3 (±15%)
