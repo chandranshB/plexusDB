@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use parking_lot::Mutex;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::bloom::BloomFilter;
@@ -22,6 +23,8 @@ pub struct SsTableReader {
     index: Vec<IndexEntry>,
     bloom: BloomFilter,
     compression: Compression,
+    /// Cached file handle — avoids re-opening the file for every block read.
+    file: Mutex<File>,
 }
 
 impl SsTableReader {
@@ -83,6 +86,7 @@ impl SsTableReader {
             index,
             bloom,
             compression,
+            file: Mutex::new(file),
         })
     }
 
@@ -137,8 +141,7 @@ impl SsTableReader {
 
         let idx_entry = &self.index[block_idx];
 
-        let mut file = File::open(&self.path)
-            .map_err(|e| EngineError::SsTable(e.to_string()))?;
+        let mut file = self.file.lock();
 
         file.seek(SeekFrom::Start(idx_entry.offset))
             .map_err(|e| EngineError::SsTable(e.to_string()))?;

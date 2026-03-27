@@ -79,16 +79,20 @@ impl Manifest {
 
     /// Register a new SSTable in the manifest.
     pub fn add_sstable(&self, info: &SsTableInfo) -> Result<(), EngineError> {
-        let conn = self.meta.conn();
-        queries::insert_sstable(&conn, info)?;
+        {
+            let conn = self.meta.conn();
+            queries::insert_sstable(&conn, info)?;
+        } // MutexGuard dropped here — avoids deadlock in reload()
         self.reload()?;
         Ok(())
     }
 
     /// Mark SSTables as compacted (pending deletion).
     pub fn mark_compacted(&self, file_names: &[&str]) -> Result<(), EngineError> {
-        let conn = self.meta.conn();
-        queries::mark_compacted(&conn, file_names)?;
+        {
+            let conn = self.meta.conn();
+            queries::mark_compacted(&conn, file_names)?;
+        } // MutexGuard dropped here — avoids deadlock in reload()
         self.reload()?;
         Ok(())
     }

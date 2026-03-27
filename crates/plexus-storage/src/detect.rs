@@ -329,6 +329,7 @@ fn detect_drive_type_windows(root: &Path) -> StorageKind {
     let probe_result = (|| -> std::io::Result<StorageKind> {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .read(true)
             .open(&probe_path)?;
@@ -449,13 +450,13 @@ fn detect_fallback() -> Vec<StorageDevice> {
 fn log_devices(devices: &[StorageDevice]) {
     tracing::info!(count = devices.len(), "detected storage devices");
     for dev in devices {
-        let total_gb = dev.total_bytes / (1024 * 1024 * 1024).max(1);
-        let avail_gb = dev.available_bytes / (1024 * 1024 * 1024).max(1);
+        let total_gb = dev.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let avail_gb = dev.available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
         tracing::info!(
             device = %dev.device_path,
             kind = %dev.kind,
-            total_gb,
-            avail_gb,
+            total_gb = format!("{total_gb:.1}"),
+            avail_gb = format!("{avail_gb:.1}"),
             usage = format!("{:.1}%", dev.usage_percent * 100.0),
             "  storage device"
         );

@@ -109,7 +109,27 @@ impl Entry {
     }
 
     /// Encode entry to bytes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the key exceeds 65535 bytes or value exceeds ~4GB.
+    /// These limits match the on-disk format field widths (u16 / u32).
     pub fn encode(&self) -> Vec<u8> {
+        assert!(
+            self.key.len() <= u16::MAX as usize,
+            "key too large for encoding: {} bytes (max {})",
+            self.key.len(),
+            u16::MAX
+        );
+        if let Some(ref val) = self.value {
+            assert!(
+                val.len() <= u32::MAX as usize,
+                "value too large for encoding: {} bytes (max {})",
+                val.len(),
+                u32::MAX
+            );
+        }
+
         let mut buf = Vec::with_capacity(self.encoded_size());
 
         // Key
@@ -168,20 +188,23 @@ impl Entry {
         let val_len = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         pos += 4;
 
-        let value = if is_tombstone || val_len == 0 {
-            None
-        } else {
+        // Always validate and advance past value bytes, even for tombstones.
+        // Corrupt data may have tombstone=true with val_len>0; we must
+        // still skip the value bytes to keep pos aligned with the stream.
+        let value = if val_len > 0 {
             if pos + val_len > data.len() {
                 return Err(EngineError::Corruption("value extends beyond data".into()));
             }
-            let v = data[pos..pos + val_len].to_vec();
+            let v = if is_tombstone {
+                None // tombstone — discard value bytes
+            } else {
+                Some(data[pos..pos + val_len].to_vec())
+            };
             pos += val_len;
-            Some(v)
+            v
+        } else {
+            None
         };
-
-        if !is_tombstone && val_len > 0 {
-            // pos already advanced above
-        }
 
         // Timestamp
         if pos + 8 > data.len() {
@@ -279,9 +302,67 @@ mod tests {
     fn test_entry_encode_decode_delete() {
         let entry = Entry::delete(b"goodbye".to_vec(), 99999);
         let encoded = entry.encode();
-        let (decoded, _) = Entry::decode(&encoded).unwrap();
+        let (decoded, consumed) = Entry::decode(&encoded).unwrap();
         assert_eq!(decoded.key, b"goodbye");
         assert!(decoded.is_tombstone());
+        assert_eq!(decoded.value, None);
         assert_eq!(decoded.timestamp, 99999);
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_entry_encode_decode_with_namespace() {
+        let mut entry = Entry::put(b"ns_key".to_vec(), b"ns_val".to_vec(), 42);
+        entry.namespace = "my_namespace".to_string();
+        let encoded = entry.encode();
+        let (decoded, consumed) = Entry::decode(&encoded).unwrap();
+        assert_eq!(decoded.key, b"ns_key");
+        assert_eq!(decoded.value, Some(b"ns_val".to_vec()));
+        assert_eq!(decoded.namespace, "my_namespace");
+        assert_eq!(decoded.timestamp, 42);
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_entry_encode_decode_empty_value() {
+        // The on-disk format doesn't distinguish Some(b"") from None —
+        // both encode as val_len=0 and decode back as None.
+        let entry = Entry::put(b"key".to_vec(), b"".to_vec(), 1);
+        let encoded = entry.encode();
+        let (decoded, consumed) = Entry::decode(&encoded).unwrap();
+        assert_eq!(decoded.key, b"key");
+        assert_eq!(decoded.value, None); // empty value round-trips to None
+        assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_entry_consecutive_decode() {
+        // Simulate how entries are stored back-to-back in an SSTable block
+        let e1 = Entry::put(b"key1".to_vec(), b"value1".to_vec(), 1);
+        let e2 = Entry::delete(b"key2".to_vec(), 2);
+        let e3 = Entry::put(b"key3".to_vec(), b"value3".to_vec(), 3);
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&e1.encode());
+        buf.extend_from_slice(&e2.encode());
+        buf.extend_from_slice(&e3.encode());
+
+        let mut pos = 0;
+        let (d1, consumed) = Entry::decode(&buf[pos..]).unwrap();
+        pos += consumed;
+        assert_eq!(d1.key, b"key1");
+        assert_eq!(d1.value, Some(b"value1".to_vec()));
+
+        let (d2, consumed) = Entry::decode(&buf[pos..]).unwrap();
+        pos += consumed;
+        assert_eq!(d2.key, b"key2");
+        assert!(d2.is_tombstone());
+
+        let (d3, consumed) = Entry::decode(&buf[pos..]).unwrap();
+        pos += consumed;
+        assert_eq!(d3.key, b"key3");
+        assert_eq!(d3.value, Some(b"value3".to_vec()));
+
+        assert_eq!(pos, buf.len(), "all bytes should be consumed");
     }
 }

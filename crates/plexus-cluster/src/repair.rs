@@ -41,7 +41,7 @@ impl MerkleTree {
 
         // Partition entries into ~64 leaves
         let leaf_count = 64.min(entries.len());
-        let chunk_size = (entries.len() + leaf_count - 1) / leaf_count;
+        let chunk_size = entries.len().div_ceil(leaf_count);
 
         let mut leaves = Vec::new();
         for chunk in entries.chunks(chunk_size) {

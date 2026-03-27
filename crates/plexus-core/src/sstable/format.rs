@@ -219,11 +219,34 @@ mod tests {
         };
 
         let encoded = footer.encode();
+        assert_eq!(encoded.len(), FOOTER_SIZE);
+
         let decoded = Footer::decode(&encoded).unwrap();
 
+        assert_eq!(decoded.magic, *MAGIC);
+        assert_eq!(decoded.version, FORMAT_VERSION);
         assert_eq!(decoded.meta_offset, 1000);
         assert_eq!(decoded.index_offset, 2000);
         assert_eq!(decoded.entry_count, 50000);
+        assert_eq!(decoded.checksum, [1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn test_footer_invalid_magic() {
+        let mut data = [0u8; FOOTER_SIZE];
+        data[0..8].copy_from_slice(b"NOTVALID");
+        data[8..12].copy_from_slice(&FORMAT_VERSION.to_le_bytes());
+        let result = Footer::decode(&data);
+        assert_eq!(result.unwrap_err(), "invalid SSTable magic bytes");
+    }
+
+    #[test]
+    fn test_footer_unsupported_version() {
+        let mut data = [0u8; FOOTER_SIZE];
+        data[0..8].copy_from_slice(MAGIC);
+        data[8..12].copy_from_slice(&999u32.to_le_bytes());
+        let result = Footer::decode(&data);
+        assert_eq!(result.unwrap_err(), "unsupported SSTable format version");
     }
 
     #[test]
@@ -243,6 +266,17 @@ mod tests {
         assert_eq!(decoded.first_key, b"aaa");
         assert_eq!(decoded.last_key, b"zzz");
         assert_eq!(decoded.offset, 4096);
+        assert_eq!(decoded.length, 3800);
+        assert_eq!(decoded.uncompressed_length, 4096);
+        assert_eq!(decoded.checksum, 0xDEADBEEF);
         assert_eq!(consumed, encoded.len());
+    }
+
+    #[test]
+    fn test_index_entry_decode_truncated() {
+        // Empty data
+        assert!(IndexEntry::decode(b"").is_err());
+        // Just the length prefix, no key data
+        assert!(IndexEntry::decode(&[10, 0]).is_err());
     }
 }

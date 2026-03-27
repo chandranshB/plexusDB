@@ -117,7 +117,9 @@ impl Wal {
             .write_all(&data)
             .map_err(|e| EngineError::Wal(e.to_string()))?;
 
-        self.size.fetch_add(record_size as u64, Ordering::Relaxed);
+        // Update size *inside* the mutex, after all writes succeed, to prevent
+        // TOCTOU drift between the counter and the actual WAL file position.
+        self.size.fetch_add(record_size as u64, Ordering::Release);
 
         Ok(offset)
     }
@@ -132,7 +134,7 @@ impl Wal {
 
     /// Current WAL file size.
     pub fn size(&self) -> u64 {
-        self.size.load(Ordering::Relaxed)
+        self.size.load(Ordering::Acquire)
     }
 
     /// Check if the WAL needs rotation.
@@ -165,7 +167,7 @@ impl Wal {
         inner.writer = BufWriter::with_capacity(64 * 1024, new_file);
         inner.path = new_path;
 
-        self.size.store(0, Ordering::Relaxed);
+        self.size.store(0, Ordering::Release);
 
         tracing::info!(
             old = %old_path.display(),
@@ -314,13 +316,26 @@ mod tests {
         wal.append(&e3).unwrap();
         wal.sync().unwrap();
 
-        // Replay
+        // Verify size tracking matches
+        assert!(wal.size() > 0);
+
+        // Replay and verify ALL fields
         let path = wal.current_path();
         let entries = Wal::replay(&path).unwrap();
         assert_eq!(entries.len(), 3);
+
         assert_eq!(entries[0].key, b"key1");
+        assert_eq!(entries[0].value, Some(b"value1".to_vec()));
+        assert_eq!(entries[0].timestamp, 1);
+        assert!(!entries[0].is_tombstone());
+
         assert_eq!(entries[1].key, b"key2");
+        assert_eq!(entries[1].value, Some(b"value2".to_vec()));
+        assert_eq!(entries[1].timestamp, 2);
+
+        assert_eq!(entries[2].key, b"key1");
         assert!(entries[2].is_tombstone());
+        assert_eq!(entries[2].timestamp, 3);
     }
 
     #[test]
@@ -346,5 +361,24 @@ mod tests {
         let old_path = wal.rotate().unwrap();
         assert!(old_path.exists());
         assert_eq!(wal.size(), 0);
+
+        // Verify WAL is writable after rotation
+        let entry = Entry::put(b"post_rotate".to_vec(), b"value".to_vec(), 100);
+        wal.append(&entry).unwrap();
+        wal.sync().unwrap();
+        assert!(wal.size() > 0);
+    }
+
+    #[test]
+    fn test_wal_replay_empty() {
+        let tmp = TempDir::new().unwrap();
+        let wal_dir = tmp.path().join("wal");
+
+        let wal = Wal::open(&wal_dir, 1024 * 1024).unwrap();
+        wal.sync().unwrap();
+
+        let path = wal.current_path();
+        let entries = Wal::replay(&path).unwrap();
+        assert!(entries.is_empty());
     }
 }

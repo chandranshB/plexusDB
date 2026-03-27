@@ -202,18 +202,57 @@ mod tests {
         // Verify tables exist
         let count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE '_%'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
         assert!(count >= 7, "expected at least 7 tables, got {count}");
+
+        // Verify critical tables by name
+        let expected_tables = [
+            "sstable_manifest",
+            "storage_config",
+            "cluster_nodes",
+            "raft_state",
+            "users",
+            "namespaces",
+        ];
+        for table_name in &expected_tables {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table_name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "expected table '{table_name}' to exist");
+        }
     }
 
     #[test]
     fn test_migrations_idempotent() {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
+
+        let count_before: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
         run_migrations(&conn).unwrap(); // Should not error
+
+        let count_after: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count_before, count_after, "idempotent run should not change table count");
     }
 }

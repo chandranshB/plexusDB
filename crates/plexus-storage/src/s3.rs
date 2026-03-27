@@ -37,7 +37,7 @@ impl S3Agent {
         let original_size = data.len() as u64;
 
         let compressed = zstd::encode_all(data.as_slice(), 6)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         let compressed_size = compressed.len() as u64;
 
         let output = input.with_extension("sst.zst");

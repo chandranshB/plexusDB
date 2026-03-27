@@ -196,4 +196,37 @@ mod tests {
         let result = mgr.decrypt_block(&tampered, b"block");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_wrong_block_id_fails() {
+        let key = EncryptionManager::generate_key();
+        let mgr = EncryptionManager::new(key);
+
+        let encrypted = mgr.encrypt_block(b"secret data", b"block_1").unwrap();
+
+        // Try decrypting with wrong block_id — should fail because
+        // per-block key derivation produces a different key
+        let result = mgr.decrypt_block(&encrypted, b"block_2");
+        assert!(result.is_err(), "decryption with wrong block_id should fail");
+    }
+
+    #[test]
+    fn test_encrypted_data_too_short() {
+        let key = EncryptionManager::generate_key();
+        let mgr = EncryptionManager::new(key);
+
+        // Data shorter than nonce + tag minimum
+        let result = mgr.decrypt_block(b"short", b"block");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encrypt_empty_plaintext() {
+        let key = EncryptionManager::generate_key();
+        let mgr = EncryptionManager::new(key);
+
+        let encrypted = mgr.encrypt_block(b"", b"block_0").unwrap();
+        let decrypted = mgr.decrypt_block(&encrypted, b"block_0").unwrap();
+        assert!(decrypted.is_empty());
+    }
 }

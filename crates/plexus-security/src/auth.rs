@@ -119,4 +119,38 @@ mod tests {
         assert!(verify_password("password123", "random_salt", &hash));
         assert!(!verify_password("wrong_pass", "random_salt", &hash));
     }
+
+    #[test]
+    fn test_password_hash_deterministic() {
+        let hash1 = hash_password("pass", "salt");
+        let hash2 = hash_password("pass", "salt");
+        assert_eq!(hash1, hash2, "same input should always produce same hash");
+    }
+
+    #[test]
+    fn test_different_salt_different_hash() {
+        let hash1 = hash_password("pass", "salt_a");
+        let hash2 = hash_password("pass", "salt_b");
+        assert_ne!(hash1, hash2, "different salts should produce different hashes");
+    }
+
+    #[test]
+    fn test_parse_invalid_prefix() {
+        let result = parse_connection_string("http://localhost:9090");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_default_port() {
+        let info = parse_connection_string("plexus://localhost").unwrap();
+        assert_eq!(info.host, "localhost");
+        assert_eq!(info.port, 9090); // default
+        assert!(info.username.is_none());
+    }
+
+    #[test]
+    fn test_parse_bad_port() {
+        let result = parse_connection_string("plexus://localhost:notanumber");
+        assert!(result.is_err());
+    }
 }

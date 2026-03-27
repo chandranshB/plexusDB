@@ -39,7 +39,8 @@ impl AlignedBuf {
     ///
     /// Panics if allocation fails (out of memory).
     pub fn new(capacity: usize) -> Self {
-        let capacity = round_up(capacity, BLOCK_SIZE);
+        // Clamp to at least BLOCK_SIZE — zero-size alloc is undefined behavior.
+        let capacity = round_up(capacity, BLOCK_SIZE).max(BLOCK_SIZE);
         let layout = Layout::from_size_align(capacity, BLOCK_SIZE)
             .expect("invalid layout");
 
@@ -199,7 +200,7 @@ impl std::fmt::Debug for AlignedBuf {
         f.debug_struct("AlignedBuf")
             .field("len", &self.len)
             .field("capacity", &self.capacity)
-            .field("aligned", &(self.ptr.as_ptr() as usize % BLOCK_SIZE == 0))
+            .field("aligned", &((self.ptr.as_ptr() as usize).is_multiple_of(BLOCK_SIZE)))
             .finish()
     }
 }

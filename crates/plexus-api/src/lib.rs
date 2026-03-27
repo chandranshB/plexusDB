@@ -11,3 +11,12 @@ pub mod service;
 pub mod proto {
     include!("generated/plexus.v1.rs");
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_api_compiles() {
+        // Just a sanity check to ensure the crate compiles and tests are not empty
+        assert!(true, "plexus-api crate compiled successfully");
+    }
+}

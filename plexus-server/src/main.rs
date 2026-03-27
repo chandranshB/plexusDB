@@ -218,7 +218,7 @@ async fn main() -> anyhow::Result<()> {
             // ── Phase 4: Initialize Cluster ──
             tracing::info!("=== Phase 4: Initializing Cluster Mesh ===");
             let gossip_bind: SocketAddr = gossip_addr.parse()
-                .expect("invalid gossip address");
+                .map_err(|e| anyhow::anyhow!("invalid gossip address '{}': {}", gossip_addr, e))?;
 
             let gossip_config = GossipConfig {
                 node_id: node_id.clone(),
@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!(join = %join_addr, "joining existing cluster");
                 gossip_engine.add_seed(
                     format!("seed-{}", join_addr),
-                    join_addr.parse().expect("invalid join address"),
+                    join_addr.parse().map_err(|e| anyhow::anyhow!("invalid join address '{}': {}", join_addr, e))?,
                 );
             }
 
@@ -274,12 +274,20 @@ async fn main() -> anyhow::Result<()> {
 
             let web_router = routes::router(web_state);
             let web_listen: SocketAddr = web_addr.parse()
-                .expect("invalid web address");
+                .map_err(|e| anyhow::anyhow!("invalid web address '{}': {}", web_addr, e))?;
 
             let _web_handle = tokio::spawn(async move {
                 tracing::info!(addr = %web_listen, "Web UI listening");
-                let listener = tokio::net::TcpListener::bind(web_listen).await.unwrap();
-                axum::serve(listener, web_router).await.unwrap();
+                let listener = match tokio::net::TcpListener::bind(web_listen).await {
+                    Ok(l) => l,
+                    Err(e) => {
+                        tracing::error!(addr = %web_listen, error = %e, "failed to bind Web UI listener");
+                        return;
+                    }
+                };
+                if let Err(e) = axum::serve(listener, web_router).await {
+                    tracing::error!(error = %e, "Web UI server error");
+                }
             });
 
             // ── Phase 7: Start gRPC Server ──
@@ -353,4 +361,15 @@ fn print_banner(node_id: &str) {
     Hardware-Aware · Distributed · Sequential-First
     Node: {}
     "#, env!("CARGO_PKG_VERSION"), &node_id[..std::cmp::min(12, node_id.len())]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

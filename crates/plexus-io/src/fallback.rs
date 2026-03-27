@@ -10,7 +10,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::aligned::AlignedBuf;
 use crate::traits::*;
@@ -29,7 +29,7 @@ impl FallbackBackend {
     }
 
     fn store_file(&self, file: File) -> i32 {
-        let mut files = self.files.lock().unwrap();
+        let mut files = self.files.lock();
         // Find empty slot or append
         for (i, slot) in files.iter_mut().enumerate() {
             if slot.is_none() {
@@ -40,14 +40,6 @@ impl FallbackBackend {
         let fd = files.len() as i32;
         files.push(Some(file));
         fd
-    }
-
-    fn _get_file(&self, fd: i32) -> Result<std::sync::MutexGuard<'_, Vec<Option<File>>>, IoError> {
-        let files = self.files.lock().unwrap();
-        if fd < 0 || fd as usize >= files.len() || files[fd as usize].is_none() {
-            return Err(IoError::NotFound(format!("fd {fd} not found")));
-        }
-        Ok(files)
     }
 }
 
@@ -75,6 +67,7 @@ impl IoBackend for FallbackBackend {
                     .read(true)
                     .write(true)
                     .create(true)
+                    .truncate(false)
                     .open(path)?
             }
             OpenMode::CreateNew => {
@@ -99,7 +92,7 @@ impl IoBackend for FallbackBackend {
     }
 
     fn close(&self, handle: FileHandle) -> Result<(), IoError> {
-        let mut files = self.files.lock().unwrap();
+        let mut files = self.files.lock();
         if let Some(slot) = files.get_mut(handle.fd as usize) {
             *slot = None; // Drop the File, closing it
         }
@@ -112,9 +105,10 @@ impl IoBackend for FallbackBackend {
         offset: u64,
         len: usize,
     ) -> Result<AlignedBuf, IoError> {
-        let mut files = self.files.lock().unwrap();
-        let file = files[handle.fd as usize]
-            .as_mut()
+        let mut files = self.files.lock();
+        let file = files
+            .get_mut(handle.fd as usize)
+            .and_then(|slot| slot.as_mut())
             .ok_or_else(|| IoError::NotFound(format!("fd {}", handle.fd)))?;
 
         file.seek(SeekFrom::Start(offset))?;
@@ -131,9 +125,10 @@ impl IoBackend for FallbackBackend {
         offset: u64,
         buf: &AlignedBuf,
     ) -> Result<usize, IoError> {
-        let mut files = self.files.lock().unwrap();
-        let file = files[handle.fd as usize]
-            .as_mut()
+        let mut files = self.files.lock();
+        let file = files
+            .get_mut(handle.fd as usize)
+            .and_then(|slot| slot.as_mut())
             .ok_or_else(|| IoError::NotFound(format!("fd {}", handle.fd)))?;
 
         file.seek(SeekFrom::Start(offset))?;
@@ -146,9 +141,10 @@ impl IoBackend for FallbackBackend {
         handle: &FileHandle,
         buf: &AlignedBuf,
     ) -> Result<(u64, usize), IoError> {
-        let mut files = self.files.lock().unwrap();
-        let file = files[handle.fd as usize]
-            .as_mut()
+        let mut files = self.files.lock();
+        let file = files
+            .get_mut(handle.fd as usize)
+            .and_then(|slot| slot.as_mut())
             .ok_or_else(|| IoError::NotFound(format!("fd {}", handle.fd)))?;
 
         let offset = file.seek(SeekFrom::End(0))?;
@@ -157,9 +153,10 @@ impl IoBackend for FallbackBackend {
     }
 
     fn fsync(&self, handle: &FileHandle) -> Result<(), IoError> {
-        let files = self.files.lock().unwrap();
-        let file = files[handle.fd as usize]
-            .as_ref()
+        let files = self.files.lock();
+        let file = files
+            .get(handle.fd as usize)
+            .and_then(|slot| slot.as_ref())
             .ok_or_else(|| IoError::NotFound(format!("fd {}", handle.fd)))?;
 
         file.sync_data()?;
@@ -167,9 +164,10 @@ impl IoBackend for FallbackBackend {
     }
 
     fn file_size(&self, handle: &FileHandle) -> Result<u64, IoError> {
-        let files = self.files.lock().unwrap();
-        let file = files[handle.fd as usize]
-            .as_ref()
+        let files = self.files.lock();
+        let file = files
+            .get(handle.fd as usize)
+            .and_then(|slot| slot.as_ref())
             .ok_or_else(|| IoError::NotFound(format!("fd {}", handle.fd)))?;
 
         let metadata = file.metadata()?;

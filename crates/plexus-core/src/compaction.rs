@@ -74,8 +74,8 @@ impl CompactionEngine {
             return u64::MAX;
         }
         // L1 = 10MB, L2 = 100MB, L3 = 1GB, etc.
-        let base = 10 * 1024 * 1024u64; // 10MB
-        base * (self.config.level_ratio as u64).pow(level - 1)
+        let base = 10u64 * 1024 * 1024; // 10MB
+        base.saturating_mul((self.config.level_ratio as u64).saturating_pow(level - 1))
     }
 
     /// Maximum number of L0 files before triggering compaction.
@@ -108,7 +108,7 @@ impl CompactionEngine {
         }
 
         // Merge all sources
-        let mut merger = MergeIterator::new(sources);
+        let merger = MergeIterator::new(sources);
 
         // Write output SSTable(s)
         let output_path = job.output_dir.join(format!(
@@ -125,7 +125,7 @@ impl CompactionEngine {
         let mut writer = SsTableWriter::new(&output_path, writer_config)?;
         let mut entries_written = 0u64;
 
-        while let Some(entry) = merger.next() {
+        for entry in merger {
             // During compaction to higher levels, we can drop tombstones
             // if we're sure there are no older versions in lower levels.
             // For safety, we keep tombstones in L0→L1 compaction.

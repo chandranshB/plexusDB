@@ -20,7 +20,7 @@ impl BloomFilter {
     /// Create a new bloom filter sized for `expected_items` with `fp_rate` false positive rate.
     pub fn new(expected_items: usize, fp_rate: f64) -> Self {
         let expected_items = expected_items.max(1);
-        let fp_rate = fp_rate.max(0.0001).min(0.5);
+        let fp_rate = fp_rate.clamp(0.0001, 0.5);
 
         // Optimal bit count: m = -n * ln(p) / (ln(2))^2
         let ln2_sq = std::f64::consts::LN_2 * std::f64::consts::LN_2;
@@ -32,7 +32,7 @@ impl BloomFilter {
             .ceil() as u32;
         let num_hashes = num_hashes.clamp(1, 30);
 
-        let byte_count = (num_bits + 7) / 8;
+        let byte_count = num_bits.div_ceil(8);
 
         Self {
             bits: vec![0u8; byte_count],
@@ -73,8 +73,8 @@ impl BloomFilter {
     /// where h1 and h2 are derived from xxh3.
     fn hash(&self, key: &[u8], i: u32) -> usize {
         let h = xxh3_64(key);
-        let h1 = (h & 0xFFFFFFFF) as u64;
-        let h2 = (h >> 32) as u64;
+        let h1 = h as u32 as u64;
+        let h2 = (h >> 32) as u32 as u64;
         ((h1.wrapping_add((i as u64).wrapping_mul(h2))) % self.num_bits as u64) as usize
     }
 
@@ -97,6 +97,20 @@ impl BloomFilter {
         let num_bits = u32::from_le_bytes(data[0..4].try_into().unwrap()) as usize;
         let num_hashes = u32::from_le_bytes(data[4..8].try_into().unwrap());
         let byte_count = u32::from_le_bytes(data[8..12].try_into().unwrap()) as usize;
+
+        if num_hashes == 0 || num_hashes > 30 {
+            return Err("bloom filter hash count out of range (1..30)");
+        }
+
+        if num_bits == 0 {
+            return Err("bloom filter has zero bits");
+        }
+
+        // Validate bit/byte consistency
+        let expected_bytes = num_bits.div_ceil(8);
+        if byte_count != expected_bytes {
+            return Err("bloom filter bit/byte count mismatch");
+        }
 
         if data.len() < 12 + byte_count {
             return Err("bloom filter data truncated");
@@ -190,5 +204,48 @@ mod tests {
         let bf2 = BloomFilter::from_bytes(&bytes).unwrap();
 
         assert!(bf2.may_contain(b"test_key"));
+        // Verify structural fields survived roundtrip
+        assert_eq!(bf.num_bits, bf2.num_bits);
+        assert_eq!(bf.num_hashes, bf2.num_hashes);
+        assert_eq!(bf.bits.len(), bf2.bits.len());
+    }
+
+    #[test]
+    fn test_from_bytes_corrupt_data() {
+        // Too short
+        assert!(BloomFilter::from_bytes(b"short").is_err());
+
+        // Valid header but truncated bit array
+        let mut data = vec![0u8; 12];
+        // num_bits = 64, num_hashes = 3, byte_count = 8
+        data[0..4].copy_from_slice(&64u32.to_le_bytes());
+        data[4..8].copy_from_slice(&3u32.to_le_bytes());
+        data[8..12].copy_from_slice(&8u32.to_le_bytes());
+        // Missing the 8 bytes of bit data
+        assert!(BloomFilter::from_bytes(&data).is_err());
+    }
+
+    #[test]
+    fn test_from_bytes_invalid_hash_count() {
+        let mut data = vec![0u8; 20]; // 12 header + 8 bits
+        // num_bits = 64, num_hashes = 0 (invalid), byte_count = 8
+        data[0..4].copy_from_slice(&64u32.to_le_bytes());
+        data[4..8].copy_from_slice(&0u32.to_le_bytes()); // zero hashes
+        data[8..12].copy_from_slice(&8u32.to_le_bytes());
+        assert!(BloomFilter::from_bytes(&data).is_err());
+
+        // num_hashes = 31 (over limit)
+        data[4..8].copy_from_slice(&31u32.to_le_bytes());
+        assert!(BloomFilter::from_bytes(&data).is_err());
+    }
+
+    #[test]
+    fn test_from_bytes_bit_byte_mismatch() {
+        let mut data = vec![0u8; 20]; // 12 header + 8 bits
+        // num_bits = 64, num_hashes = 3, byte_count = 7 (should be 8 for 64 bits)
+        data[0..4].copy_from_slice(&64u32.to_le_bytes());
+        data[4..8].copy_from_slice(&3u32.to_le_bytes());
+        data[8..12].copy_from_slice(&7u32.to_le_bytes()); // Wrong!
+        assert!(BloomFilter::from_bytes(&data).is_err());
     }
 }

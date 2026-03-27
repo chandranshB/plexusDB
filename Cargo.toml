@@ -94,6 +94,7 @@ rust-embed = "8"
 mime_guess = "2"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+libc = "0.2"
 
 [profile.release]
 lto = "fat"

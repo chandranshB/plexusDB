@@ -29,7 +29,8 @@ impl MemKey {
     fn new(key: Vec<u8>, timestamp: u64) -> Self {
         Self {
             key,
-            reverse_ts: u64::MAX - timestamp,
+            // wrapping_sub prevents panic in debug on u64::MAX timestamps
+            reverse_ts: u64::MAX.wrapping_sub(timestamp),
         }
     }
 }
@@ -75,7 +76,7 @@ impl MemTable {
     ///
     /// Returns an error if the MemTable is frozen.
     pub fn put(&self, entry: Entry) -> Result<(), &'static str> {
-        if self.frozen.load(Ordering::Relaxed) {
+        if self.frozen.load(Ordering::Acquire) {
             return Err("MemTable is frozen");
         }
 
@@ -113,7 +114,7 @@ impl MemTable {
                 return Some(Entry {
                     key: mem_key.key.clone(),
                     value: mem_val.value.clone(),
-                    timestamp: u64::MAX - mem_key.reverse_ts,
+                    timestamp: u64::MAX.wrapping_sub(mem_key.reverse_ts),
                     namespace: mem_val.namespace.clone(),
                 });
             }
@@ -139,7 +140,7 @@ impl MemTable {
     /// Is this MemTable frozen?
     #[inline]
     pub fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::Relaxed)
+        self.frozen.load(Ordering::Acquire)
     }
 
     /// Approximate size in bytes.
@@ -170,7 +171,7 @@ impl MemTable {
             Entry {
                 key: mem_key.key.clone(),
                 value: mem_val.value.clone(),
-                timestamp: u64::MAX - mem_key.reverse_ts,
+                timestamp: u64::MAX.wrapping_sub(mem_key.reverse_ts),
                 namespace: mem_val.namespace.clone(),
             }
         })

@@ -88,55 +88,57 @@ impl MergeIterator {
         self.initialized = true;
     }
 
+    /// Collect all remaining entries into a Vec.
+    pub fn collect_all(&mut self) -> Vec<Entry> {
+        let mut result = Vec::new();
+        for entry in self.by_ref() {
+            result.push(entry);
+        }
+        result
+    }
+}
+
+impl Iterator for MergeIterator {
+    type Item = Entry;
+
     /// Get the next entry in sorted order.
     ///
     /// Automatically deduplicates: for the same key, only the newest version
     /// is returned.
-    pub fn next(&mut self) -> Option<Entry> {
+    fn next(&mut self) -> Option<Entry> {
         if !self.initialized {
             self.init();
         }
 
-        loop {
-            let heap_entry = self.heap.pop()?;
-            let current = heap_entry.entry;
-            let source_idx = heap_entry.source_index;
+        let heap_entry = self.heap.pop()?;
+        let current = heap_entry.entry;
+        let source_idx = heap_entry.source_index;
 
-            // Advance the source that provided this entry
-            if let Some(next) = self.sources[source_idx].next_entry() {
-                self.heap.push(HeapEntry {
-                    entry: next,
-                    source_index: source_idx,
-                });
-            }
+        // Advance the source that provided this entry
+        if let Some(next) = self.sources[source_idx].next_entry() {
+            self.heap.push(HeapEntry {
+                entry: next,
+                source_index: source_idx,
+            });
+        }
 
-            // Skip older versions of the same key
-            while let Some(top) = self.heap.peek() {
-                if top.entry.key == current.key {
-                    let old = self.heap.pop().unwrap();
-                    // Advance that source too
-                    if let Some(next) = self.sources[old.source_index].next_entry() {
-                        self.heap.push(HeapEntry {
-                            entry: next,
-                            source_index: old.source_index,
-                        });
-                    }
-                } else {
-                    break;
+        // Skip older versions of the same key
+        while let Some(top) = self.heap.peek() {
+            if top.entry.key == current.key {
+                let old = self.heap.pop().unwrap();
+                // Advance that source too
+                if let Some(next) = self.sources[old.source_index].next_entry() {
+                    self.heap.push(HeapEntry {
+                        entry: next,
+                        source_index: old.source_index,
+                    });
                 }
+            } else {
+                break;
             }
-
-            return Some(current);
         }
-    }
 
-    /// Collect all remaining entries into a Vec.
-    pub fn collect_all(&mut self) -> Vec<Entry> {
-        let mut result = Vec::new();
-        while let Some(entry) = self.next() {
-            result.push(entry);
-        }
-        result
+        Some(current)
     }
 }
 
