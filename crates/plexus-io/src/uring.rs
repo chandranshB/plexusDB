@@ -16,12 +16,10 @@
 
 #[cfg(target_os = "linux")]
 mod inner {
-    use std::os::unix::io::RawFd;
     use std::path::Path;
 
     use crate::aligned::AlignedBuf;
     use crate::traits::*;
-    use crate::BLOCK_SIZE;
 
     /// io_uring backend configuration.
     #[derive(Debug, Clone)]
@@ -235,7 +233,7 @@ mod tests {
 
         let b = backend();
         let handle = b.open(&path, OpenMode::ReadOnly, false).unwrap();
-        assert_eq!(handle.fd >= 0, true);
+        assert!(handle.fd >= 0);
         b.close(handle).unwrap();
     }
 

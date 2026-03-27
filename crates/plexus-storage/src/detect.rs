@@ -358,7 +358,7 @@ fn detect_drive_type_windows(root: &Path) -> StorageKind {
 
         tracing::debug!(
             drive = %root.display(),
-            avg_read_us = format!("{avg_us:.0}"),
+            avg_read_us = %format!("{avg_us:.0}"),
             kind = %kind,
             "drive latency probe"
         );
@@ -447,12 +447,13 @@ fn log_devices(devices: &[StorageDevice]) {
     for dev in devices {
         let total_gb = dev.total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
         let avail_gb = dev.available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        let usage_pct = dev.usage_percent * 100.0;
         tracing::info!(
             device = %dev.device_path,
             kind = %dev.kind,
-            total_gb = format!("{total_gb:.1}"),
-            avail_gb = format!("{avail_gb:.1}"),
-            usage = format!("{:.1}%", dev.usage_percent * 100.0),
+            total_gb = %format!("{total_gb:.1}"),
+            avail_gb = %format!("{avail_gb:.1}"),
+            usage = %format!("{usage_pct:.1}%"),
             "  storage device"
         );
     }

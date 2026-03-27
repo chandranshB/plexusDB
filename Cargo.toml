@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chandranshB/plexusDB"
-rust-version = "1.75"
+rust-version = "1.82"
 
 [workspace.dependencies]
 # Async runtime

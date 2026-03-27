@@ -46,7 +46,7 @@ impl S3Agent {
             input = %input.display(),
             original = original_size,
             compressed = compressed_size,
-            ratio = format!("{:.1}x", original_size as f64 / compressed_size as f64),
+            ratio = %format!("{:.1}x", original_size as f64 / compressed_size as f64),
             "compressed SSTable for S3"
         );
 

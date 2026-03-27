@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # Deny warnings in CI — keeps the codebase clean
   RUSTFLAGS: "-D warnings"
 
 jobs:
@@ -81,19 +80,22 @@ jobs:
         run: cargo test --workspace --doc
 
   # ── MSRV Check ──────────────────────────────────────────────────────────────
+  # Checks that our own code compiles on the declared minimum Rust version.
+  # Uses --ignore-rust-version so transitive deps that bumped their own MSRV
+  # don't block us (we only control our code, not theirs).
   msrv:
-    name: MSRV (Rust 1.75)
+    name: MSRV (Rust 1.82)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.75
+      - uses: dtolnay/rust-toolchain@1.82
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
         with:
           key: msrv
       - name: Check MSRV
-        run: cargo check --workspace --all-targets
+        run: cargo check --workspace --all-targets --ignore-rust-version
 
   # ── Release Build ────────────────────────────────────────────────────────────
   build-release:
@@ -130,3 +132,4 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: .

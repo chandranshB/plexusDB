@@ -206,8 +206,8 @@ async fn main() -> anyhow::Result<()> {
                 ..EngineConfig::default()
             };
             tracing::info!(
-                memtable = format!("{}MB", memtable_size_mb),
-                cache = format!("{}MB", cache_size_mb),
+                memtable = %format!("{}MB", memtable_size_mb),
+                cache = %format!("{}MB", cache_size_mb),
                 compaction_threads = _engine_config.compaction_threads,
                 "engine configured"
             );
