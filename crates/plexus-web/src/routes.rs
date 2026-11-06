@@ -4,13 +4,49 @@ use axum::{
     extract::State,
     http::{header, StatusCode, Uri},
     response::{Html, IntoResponse, Json},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::StaticAssets;
+
+/// Live benchmark counters — updated by the benchmark task, read by the API.
+pub struct BenchState {
+    pub running: AtomicBool,
+    pub writes_done: AtomicU64,
+    pub reads_done: AtomicU64,
+    pub errors: AtomicU64,
+    pub total_keys: AtomicU64,
+    pub value_size: AtomicU64,
+    pub write_ns_total: AtomicU64,  // nanoseconds accumulated for writes
+    pub read_ns_total: AtomicU64,   // nanoseconds accumulated for reads
+    pub started_at_ms: AtomicU64,   // unix ms when bench started
+}
+
+impl BenchState {
+    pub fn new() -> Self {
+        Self {
+            running: AtomicBool::new(false),
+            writes_done: AtomicU64::new(0),
+            reads_done: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            total_keys: AtomicU64::new(0),
+            value_size: AtomicU64::new(0),
+            write_ns_total: AtomicU64::new(0),
+            read_ns_total: AtomicU64::new(0),
+            started_at_ms: AtomicU64::new(0),
+        }
+    }
+}
+
+impl Default for BenchState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Shared state for the web UI.
 pub struct WebState {
@@ -20,6 +56,8 @@ pub struct WebState {
     pub storage_mode: String,
     /// Live engine metrics — None if engine not yet started.
     pub engine: Option<Arc<plexus_core::Engine>>,
+    /// Live benchmark state — always present, idle when not running.
+    pub bench: Arc<BenchState>,
 }
 
 /// Build the web UI router.
@@ -29,6 +67,8 @@ pub fn router(state: Arc<WebState>) -> Router {
         .route("/api/status", get(status_handler))
         .route("/api/health", get(health_handler))
         .route("/api/metrics", get(metrics_handler))
+        .route("/api/bench/status", get(bench_status_handler))
+        .route("/api/bench/stop", post(bench_stop_handler))
         .route("/metrics", get(prometheus_handler))
         .fallback(static_handler)
         .with_state(state)
@@ -100,6 +140,58 @@ async fn metrics_handler(State(state): State<Arc<WebState>>) -> Json<serde_json:
         }
     }
 }
+/// Live benchmark status endpoint.
+async fn bench_status_handler(State(state): State<Arc<WebState>>) -> Json<serde_json::Value> {
+    let b = &state.bench;
+    let running = b.running.load(Ordering::Relaxed);
+    let writes = b.writes_done.load(Ordering::Relaxed);
+    let reads = b.reads_done.load(Ordering::Relaxed);
+    let errors = b.errors.load(Ordering::Relaxed);
+    let total = b.total_keys.load(Ordering::Relaxed);
+    let value_size = b.value_size.load(Ordering::Relaxed);
+    let write_ns = b.write_ns_total.load(Ordering::Relaxed);
+    let read_ns = b.read_ns_total.load(Ordering::Relaxed);
+    let started_ms = b.started_at_ms.load(Ordering::Relaxed);
+
+    let elapsed_ms = if started_ms > 0 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+            .saturating_sub(started_ms)
+    } else {
+        0
+    };
+
+    let write_avg_us = if writes > 0 { write_ns / writes / 1000 } else { 0 };
+    let read_avg_us = if reads > 0 { read_ns / reads / 1000 } else { 0 };
+    let elapsed_s = elapsed_ms as f64 / 1000.0;
+    let write_ops = if elapsed_s > 0.0 { writes as f64 / elapsed_s } else { 0.0 };
+    let read_ops = if elapsed_s > 0.0 { reads as f64 / elapsed_s } else { 0.0 };
+
+    Json(json!({
+        "running": running,
+        "writes_done": writes,
+        "reads_done": reads,
+        "errors": errors,
+        "total_keys": total,
+        "value_size": value_size,
+        "elapsed_ms": elapsed_ms,
+        "write_ops_per_sec": write_ops as u64,
+        "read_ops_per_sec": read_ops as u64,
+        "write_avg_latency_us": write_avg_us,
+        "read_avg_latency_us": read_avg_us,
+        "write_progress_pct": if total > 0 { (writes * 100 / total).min(100) } else { 0 },
+        "read_progress_pct": if total > 0 { (reads * 100 / total).min(100) } else { 0 },
+    }))
+}
+
+/// Stop a running benchmark.
+async fn bench_stop_handler(State(state): State<Arc<WebState>>) -> Json<serde_json::Value> {
+    state.bench.running.store(false, Ordering::Relaxed);
+    Json(json!({ "stopped": true }))
+}
+
 /// Prometheus text format metrics endpoint (`/metrics`).
 ///
 /// Compatible with any Prometheus scraper or Grafana agent.
@@ -236,6 +328,7 @@ mod tests {
             start_time: std::time::Instant::now(),
             storage_mode: "ssd_only".to_string(),
             engine: None,
+            bench: Arc::new(BenchState::new()),
         })
     }
 
@@ -319,6 +412,7 @@ mod tests {
             start_time: std::time::Instant::now(),
             storage_mode: "ssd_only".to_string(),
             engine: Some(engine),
+            bench: Arc::new(BenchState::new()),
         });
 
         let app = router(state);

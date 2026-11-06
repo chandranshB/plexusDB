@@ -15,7 +15,8 @@ use plexus_cluster::hash_ring::HashRing;
 use plexus_core::{Engine, EngineConfig};
 use plexus_security::tls::TlsConfig;
 use plexus_storage::{detect_storage, StorageConfig, TierRouter};
-use plexus_web::routes::{self, WebState};
+use plexus_web::routes::{self, BenchState, WebState};
+use plexus_client;
 
 /// PlexusDB — Hardware-Aware Distributed NoSQL Database
 #[derive(Parser)]
@@ -74,6 +75,25 @@ enum Commands {
         /// Benchmark against a local data directory (no gRPC needed)
         #[arg(long, default_value = "./plexus-bench")]
         data_dir: PathBuf,
+    },
+
+    /// Run a live benchmark against a running PlexusDB node (visible at localhost:8080)
+    BenchLive {
+        /// gRPC endpoint of the running node
+        #[arg(long, default_value = "http://127.0.0.1:9090")]
+        grpc_addr: String,
+        /// Web UI address to serve live metrics on
+        #[arg(long, default_value = "0.0.0.0:8081")]
+        web_addr: String,
+        /// Number of keys to write then read
+        #[arg(long, default_value_t = 100_000)]
+        keys: usize,
+        /// Value size in bytes
+        #[arg(long, default_value_t = 256)]
+        value_size: usize,
+        /// Number of concurrent writer tasks
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
     },
 
     /// Generate TLS certificates
@@ -218,6 +238,7 @@ async fn main() -> anyhow::Result<()> {
                 start_time,
                 storage_mode: tier_router.mode().to_string(),
                 engine: Some(Arc::clone(&engine)),
+                bench: Arc::new(BenchState::new()),
             });
             let web_router = routes::router(web_state);
             let web_listen: SocketAddr = web_addr
@@ -370,8 +391,149 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Commands::GenCerts { output, node_id } => {
-            fmt().with_env_filter(EnvFilter::new("info")).init();
+        Commands::BenchLive {
+            grpc_addr,
+            web_addr,
+            keys,
+            value_size,
+            concurrency,
+        } => {
+            use std::sync::atomic::Ordering;
+            use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+            fmt().with_env_filter(EnvFilter::new("warn")).init();
+
+            let bench = Arc::new(BenchState::new());
+            bench.total_keys.store(keys as u64, Ordering::Relaxed);
+            bench.value_size.store(value_size as u64, Ordering::Relaxed);
+
+            // Serve the web UI with live bench state (no engine needed)
+            let web_state = Arc::new(WebState {
+                node_id: "bench-runner".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                start_time: Instant::now(),
+                storage_mode: "bench".to_string(),
+                engine: None,
+                bench: Arc::clone(&bench),
+            });
+            let web_router = routes::router(web_state);
+            let web_listen: SocketAddr = web_addr
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid web address '{}': {}", web_addr, e))?;
+            tokio::spawn(async move {
+                match tokio::net::TcpListener::bind(web_listen).await {
+                    Ok(listener) => { axum::serve(listener, web_router).await.ok(); }
+                    Err(e) => { eprintln!("bench-live: failed to bind {web_listen}: {e}"); }
+                }
+            });
+
+            println!("PlexusDB Live Benchmark");
+            println!("  Target:      {grpc_addr}");
+            println!("  Keys:        {keys}");
+            println!("  Value size:  {value_size} bytes");
+            println!("  Concurrency: {concurrency}");
+            println!("  Dashboard:   http://{web_addr}");
+            println!();
+
+            // Connect client
+            let client = plexus_client::PlexusClient::connect(&grpc_addr)
+                .await
+                .map_err(|e| anyhow::anyhow!("cannot connect to {grpc_addr}: {e}"))?;
+
+            let value = vec![0xABu8; value_size];
+            let keys_per_task = keys / concurrency;
+
+            // ── Write phase ──────────────────────────────────────────────────
+            println!("Phase 1/2: Writing {keys} keys with {concurrency} concurrent tasks...");
+            bench.running.store(true, Ordering::Relaxed);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            bench.started_at_ms.store(now_ms, Ordering::Relaxed);
+
+            let mut write_tasks = Vec::new();
+            for t in 0..concurrency {
+                let client = client.clone();
+                let bench = Arc::clone(&bench);
+                let value = value.clone();
+                let start = t * keys_per_task;
+                let end = if t == concurrency - 1 { keys } else { start + keys_per_task };
+                write_tasks.push(tokio::spawn(async move {
+                    for i in start..end {
+                        let key = format!("bench_key_{i:010}").into_bytes();
+                        let t0 = Instant::now();
+                        match client.put(key, value.clone()).await {
+                            Ok(_) => {
+                                let ns = t0.elapsed().as_nanos() as u64;
+                                bench.writes_done.fetch_add(1, Ordering::Relaxed);
+                                bench.write_ns_total.fetch_add(ns, Ordering::Relaxed);
+                            }
+                            Err(_) => { bench.errors.fetch_add(1, Ordering::Relaxed); }
+                        }
+                        if !bench.running.load(Ordering::Relaxed) { break; }
+                    }
+                }));
+            }
+            for t in write_tasks { t.await.ok(); }
+
+            let writes = bench.writes_done.load(Ordering::Relaxed);
+            let write_ns = bench.write_ns_total.load(Ordering::Relaxed);
+            let write_elapsed = SystemTime::now()
+                .duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+                - bench.started_at_ms.load(Ordering::Relaxed);
+            let write_ops = if write_elapsed > 0 { writes * 1000 / write_elapsed } else { 0 };
+            let write_avg_us = if writes > 0 { write_ns / writes / 1000 } else { 0 };
+            println!("  Write: {writes} keys in {:.2}s = {write_ops} ops/sec  (avg {write_avg_us}µs/op)",
+                write_elapsed as f64 / 1000.0);
+
+            // ── Read phase ───────────────────────────────────────────────────
+            println!("Phase 2/2: Reading {keys} keys with {concurrency} concurrent tasks...");
+            let read_start_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+
+            let mut read_tasks = Vec::new();
+            for t in 0..concurrency {
+                let client = client.clone();
+                let bench = Arc::clone(&bench);
+                let start = t * keys_per_task;
+                let end = if t == concurrency - 1 { keys } else { start + keys_per_task };
+                read_tasks.push(tokio::spawn(async move {
+                    for i in start..end {
+                        let key = format!("bench_key_{i:010}").into_bytes();
+                        let t0 = Instant::now();
+                        match client.get(key).await {
+                            Ok(_) => {
+                                let ns = t0.elapsed().as_nanos() as u64;
+                                bench.reads_done.fetch_add(1, Ordering::Relaxed);
+                                bench.read_ns_total.fetch_add(ns, Ordering::Relaxed);
+                            }
+                            Err(_) => { bench.errors.fetch_add(1, Ordering::Relaxed); }
+                        }
+                        if !bench.running.load(Ordering::Relaxed) { break; }
+                    }
+                }));
+            }
+            for t in read_tasks { t.await.ok(); }
+
+            let reads = bench.reads_done.load(Ordering::Relaxed);
+            let read_ns = bench.read_ns_total.load(Ordering::Relaxed);
+            let read_elapsed = SystemTime::now()
+                .duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
+                - read_start_ms;
+            let read_ops = if read_elapsed > 0 { reads * 1000 / read_elapsed } else { 0 };
+            let read_avg_us = if reads > 0 { read_ns / reads / 1000 } else { 0 };
+            println!("  Read:  {reads} keys in {:.2}s = {read_ops} ops/sec  (avg {read_avg_us}µs/op)",
+                read_elapsed as f64 / 1000.0);
+
+            bench.running.store(false, Ordering::Relaxed);
+            println!();
+            println!("Done. Dashboard still live at http://{web_addr} — Ctrl-C to exit.");
+            tokio::signal::ctrl_c().await.ok();
+            Ok(())
+        }
+
+        Commands::GenCerts { output, node_id } => {            fmt().with_env_filter(EnvFilter::new("info")).init();
             let tls = TlsConfig::generate_self_signed(&output, &node_id)?;
             println!("Certificates written to: {}", output.display());
             println!("  CA cert:   {}", tls.ca_cert_path.display());

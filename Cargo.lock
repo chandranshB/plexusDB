@@ -2332,6 +2332,7 @@ dependencies = [
  "clap",
  "parking_lot",
  "plexus-api",
+ "plexus-client",
  "plexus-cluster",
  "plexus-core",
  "plexus-io",

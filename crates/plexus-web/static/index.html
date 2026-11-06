@@ -439,6 +439,102 @@
 
         .grid-3 .card:nth-child(2), .grid-2 .card:nth-child(2) { animation-delay: 40ms; }
         .grid-3 .card:nth-child(3) { animation-delay: 80ms; }
+
+        /* ── Benchmark panel ────────────────────────── */
+        .bench-panel {
+            background: var(--bg-raised);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            margin-bottom: 28px;
+        }
+
+        .bench-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .bench-title {
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .bench-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            transition: background 0.3s;
+        }
+
+        .bench-status-dot.running {
+            background: var(--green);
+            box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+            animation: pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .bench-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        @media (max-width: 900px) { .bench-grid { grid-template-columns: repeat(2, 1fr); } }
+
+        .bench-stat {
+            background: var(--bg-overlay);
+            border-radius: var(--radius-sm);
+            padding: 12px 14px;
+        }
+
+        .bench-stat-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; }
+
+        .bench-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+        }
+
+        .bench-phases { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+
+        .bench-phase { background: var(--bg-overlay); border-radius: var(--radius-sm); padding: 12px 14px; }
+
+        .bench-phase-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .bench-stop-btn {
+            background: rgba(248, 113, 113, 0.12);
+            color: var(--red);
+            border: 1px solid rgba(248, 113, 113, 0.2);
+            border-radius: var(--radius-sm);
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .bench-stop-btn:hover { background: rgba(248, 113, 113, 0.2); }
+        .bench-stop-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .bench-idle-msg { font-size: 13px; color: var(--text-muted); text-align: center; padding: 12px 0 4px; }
     </style>
 </head>
 <body>
@@ -638,6 +734,72 @@
                     </tbody>
                 </table>
             </div>
+
+            <!-- Live Benchmark -->
+            <div class="section-label">Live Benchmark</div>
+            <div class="bench-panel" id="bench-panel">
+                <div class="bench-header">
+                    <div class="bench-title">
+                        <div class="bench-status-dot" id="bench-dot"></div>
+                        <span id="bench-status-text">Idle — run <code style="font-family:var(--mono);font-size:11px;background:var(--bg-overlay);padding:1px 5px;border-radius:3px">plexus bench-live</code> to start</span>
+                    </div>
+                    <button class="bench-stop-btn" id="bench-stop-btn" disabled onclick="stopBench()">Stop</button>
+                </div>
+
+                <div id="bench-idle-msg" class="bench-idle-msg">
+                    No benchmark running. Start one with:<br>
+                    <code style="font-family:var(--mono);font-size:12px;color:var(--cyan)">plexus bench-live --keys 100000 --concurrency 4</code>
+                </div>
+
+                <div id="bench-live" style="display:none">
+                    <div class="bench-grid">
+                        <div class="bench-stat">
+                            <div class="bench-stat-label">Write ops/s</div>
+                            <div class="bench-stat-value" id="b-write-ops" style="color:var(--cyan)">—</div>
+                        </div>
+                        <div class="bench-stat">
+                            <div class="bench-stat-label">Read ops/s</div>
+                            <div class="bench-stat-value" id="b-read-ops" style="color:var(--green)">—</div>
+                        </div>
+                        <div class="bench-stat">
+                            <div class="bench-stat-label">Write latency</div>
+                            <div class="bench-stat-value" id="b-write-lat" style="color:var(--violet)">—</div>
+                        </div>
+                        <div class="bench-stat">
+                            <div class="bench-stat-label">Read latency</div>
+                            <div class="bench-stat-value" id="b-read-lat" style="color:var(--amber)">—</div>
+                        </div>
+                    </div>
+
+                    <div class="bench-phases">
+                        <div class="bench-phase">
+                            <div class="bench-phase-label">
+                                <span>Writes</span>
+                                <span id="b-write-count">0 / 0</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-fill" id="b-write-bar" style="width:0%;background:var(--cyan)"></div>
+                            </div>
+                        </div>
+                        <div class="bench-phase">
+                            <div class="bench-phase-label">
+                                <span>Reads</span>
+                                <span id="b-read-count">0 / 0</span>
+                            </div>
+                            <div class="progress">
+                                <div class="progress-fill" id="b-read-bar" style="width:0%;background:var(--green)"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:16px;font-size:12px;color:var(--text-muted)">
+                        <span>Elapsed: <span id="b-elapsed" style="color:var(--text-dim)">—</span></span>
+                        <span>Errors: <span id="b-errors" style="color:var(--red)">0</span></span>
+                        <span>Keys: <span id="b-total" style="color:var(--text-dim)">—</span></span>
+                        <span>Value: <span id="b-vsize" style="color:var(--text-dim)">—</span></span>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -776,7 +938,68 @@
 
         poll();
         setInterval(poll, 2000);
+
+        // ── Benchmark polling ────────────────────────────────────────────────
+        async function pollBench() {
+            try {
+                const res = await fetch('/api/bench/status');
+                if (!res.ok) return;
+                const b = await res.json();
+
+                const dot = document.getElementById('bench-dot');
+                const statusText = document.getElementById('bench-status-text');
+                const liveDiv = document.getElementById('bench-live');
+                const idleMsg = document.getElementById('bench-idle-msg');
+                const stopBtn = document.getElementById('bench-stop-btn');
+
+                if (b.running || b.writes_done > 0 || b.reads_done > 0) {
+                    dot.classList.toggle('running', b.running);
+                    statusText.textContent = b.running ? 'Benchmark running...' : 'Benchmark complete';
+                    liveDiv.style.display = 'block';
+                    idleMsg.style.display = 'none';
+                    stopBtn.disabled = !b.running;
+
+                    document.getElementById('b-write-ops').textContent =
+                        b.write_ops_per_sec.toLocaleString();
+                    document.getElementById('b-read-ops').textContent =
+                        b.read_ops_per_sec.toLocaleString();
+                    document.getElementById('b-write-lat').textContent =
+                        b.write_avg_latency_us > 0 ? b.write_avg_latency_us + 'µs' : '—';
+                    document.getElementById('b-read-lat').textContent =
+                        b.read_avg_latency_us > 0 ? b.read_avg_latency_us + 'µs' : '—';
+
+                    const total = b.total_keys || 0;
+                    document.getElementById('b-write-count').textContent =
+                        b.writes_done.toLocaleString() + ' / ' + total.toLocaleString();
+                    document.getElementById('b-read-count').textContent =
+                        b.reads_done.toLocaleString() + ' / ' + total.toLocaleString();
+                    document.getElementById('b-write-bar').style.width =
+                        (b.write_progress_pct || 0) + '%';
+                    document.getElementById('b-read-bar').style.width =
+                        (b.read_progress_pct || 0) + '%';
+
+                    const elMs = b.elapsed_ms || 0;
+                    const elS = (elMs / 1000).toFixed(1);
+                    document.getElementById('b-elapsed').textContent = elS + 's';
+                    document.getElementById('b-errors').textContent = b.errors || 0;
+                    document.getElementById('b-total').textContent = total.toLocaleString();
+                    document.getElementById('b-vsize').textContent =
+                        b.value_size ? b.value_size + ' B' : '—';
+                } else {
+                    dot.classList.remove('running');
+                    stopBtn.disabled = true;
+                }
+            } catch (_) {}
+        }
+
+        pollBench();
+        setInterval(pollBench, 1000);
     })();
+
+    async function stopBench() {
+        await fetch('/api/bench/stop', { method: 'POST' });
+        document.getElementById('bench-stop-btn').disabled = true;
+    }
     </script>
 </body>
 </html>

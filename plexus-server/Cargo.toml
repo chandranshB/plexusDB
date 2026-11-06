@@ -18,6 +18,7 @@ plexus-cluster = { path = "../crates/plexus-cluster" }
 plexus-security = { path = "../crates/plexus-security" }
 plexus-web = { path = "../crates/plexus-web" }
 plexus-api = { path = "../crates/plexus-api" }
+plexus-client = { path = "../crates/plexus-client" }
 
 anyhow = { workspace = true }
 tokio = { workspace = true }
